@@ -357,3 +357,83 @@ button:active {
     }
 } 
 
+
+
+.reply-preview {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 20px;
+    border-top: 1px solid rgba(0,0,0,0.08);
+    background: #eef6ff;
+}
+
+.reply-preview.hidden {
+    display: none;
+}
+
+.reply-preview-label {
+    font-size: 0.8em;
+    color: #2563eb;
+    font-weight: 600;
+    margin-bottom: 2px;
+}
+
+#reply-preview-text {
+    color: var(--text-dark);
+    font-size: 0.95em;
+}
+
+#clear-reply {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1em;
+}
+
+.reply-reference {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 8px;
+    width: 100%;
+    text-align: left;
+    border-radius: 8px;
+    border: none;
+    padding: 8px 10px;
+    background: rgba(0,0,0,0.08);
+    cursor: pointer;
+}
+
+.message.own .reply-reference {
+    background: rgba(255,255,255,0.22);
+}
+
+.reply-reference-sender {
+    font-size: 0.8em;
+    font-weight: 600;
+}
+
+.reply-reference-text {
+    font-size: 0.86em;
+    opacity: 0.9;
+}
+
+.message-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.message.swiping {
+    transition: transform 0.05s linear;
+}
+
+.message-highlight {
+    outline: 2px solid #f59e0b;
+    outline-offset: 2px;
+}
