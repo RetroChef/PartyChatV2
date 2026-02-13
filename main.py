@@ -34,9 +34,9 @@ app.config.update(
     CORS_ORIGINS='*',
     CHAT_ROOMS=[
         'General',
-        'Zero to Knowing',
-        'Code with Josh',
-        'The Nerd Nook'
+        'Study Corner',
+        'Games and Entertainment',
+        'Technology Nook'
     ]
 )
     # Available chat rooms - stored as constant for now, could be moved to database
@@ -395,3 +395,4 @@ if __name__ == '__main__':
         debug=app.config['DEBUG'],
         use_reloader=app.config['DEBUG']
     )
+
