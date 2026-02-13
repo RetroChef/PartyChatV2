@@ -49,6 +49,10 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 # Extension
 
 db.init_app(app)
+
+with app.app_context():
+    db.create_all()
+
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
