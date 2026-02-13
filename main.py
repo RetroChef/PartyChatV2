@@ -16,7 +16,6 @@ from models import db, User
 
 app = Flask(__name__)
 
-
 # Config logging
 logging.basicConfig(
     level=logging.INFO,
@@ -33,9 +32,9 @@ app.config.update(
     CORS_ORIGINS='*',
     CHAT_ROOMS=[
         'General',
-        'Zero to Knowing',
-        'Code with Josh',
-        'The Nerd Nook'
+        'Education',
+        'Technology',
+        'Gaming'
     ]
 )
     # Available chat rooms - stored as constant for now, could be moved to database
