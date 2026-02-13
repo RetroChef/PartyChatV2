@@ -2,6 +2,7 @@
 import os
 import random
 import logging
+import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 import re
@@ -277,6 +278,7 @@ def handle_message(data: dict):
         room = data.get('room', 'General')
         msg_type = data.get('type', 'message')
         message = data.get('msg', '').strip()
+        reply_to = data.get('reply_to')
         
         timestamp = datetime.now().isoformat()
         
@@ -331,14 +333,24 @@ def handle_message(data: dict):
             target_user = data.get('target')
             if not target_user:
                 return
+            
+            reply_payload = None
+            if isinstance(reply_to, dict):
+                reply_payload = {
+                    'id': str(reply_to.get('id', '')),
+                    'sender': str(reply_to.get('sender', '')),
+                    'msg': str(reply_to.get('msg', ''))[:200]
+                }
                 
             for sid, user_data in active_users.items():
                 if user_data['username'] == target_user:
                     emit('private_message', {
+                        'id': str(uuid.uuid4()),
                         'msg': message,
                         'from': username,
                         'to': target_user,
-                        'timestamp': timestamp
+                        'timestamp': timestamp,
+                        'reply_to': reply_payload
                     }, room=sid)
                     logger.info(f"Private message sent: {username} -> {target_user}")
                     return
@@ -350,13 +362,22 @@ def handle_message(data: dict):
             if room not in app.config['CHAT_ROOMS']:
                 logger.warning(f"Message to invalid room: {room}")
                 return
-                
+            
+            reply_payload = None
+            if isinstance(reply_to, dict):
+                reply_payload = {
+                    'id': str(reply_to.get('id', '')),
+                    'sender': str(reply_to.get('sender', '')),
+                    'msg': str(reply_to.get('msg', ''))[:200]
+                }
             emit('message', {
+                'id': str(uuid.uuid4()),
                 'msg': message,
                 'username': username,
                 'room': room,
                 'timestamp': timestamp,
-                'type': 'message'
+                'type': 'message',
+                'reply_to': reply_payload
             }, room=room)
             
             logger.info(f"Message sent in {room} by {username}")
