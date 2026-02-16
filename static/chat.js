@@ -4,6 +4,10 @@ let username = document.getElementById("username").textContent;
 let roomMessages = {};
 let replyContext = null;
 
+const ROOM_MESSAGES_STORAGE_KEY = `partychat:roomMessages:${username}`;
+
+hydrateRoomMessages();
+
 const SWIPE_REPLY_THRESHOLD = 70;
 const messageElementsById = new Map();
 
@@ -68,6 +72,36 @@ function storeRoomMessage(messageData) {
         }
 
         roomMessages[currentRoom].push(messageData);
+        persistRoomMessages();
+}
+
+function persistRoomMessages() {
+        try {
+                localStorage.setItem(
+                        ROOM_MESSAGES_STORAGE_KEY,
+                        JSON.stringify(roomMessages),
+                );
+        } catch (_error) {
+                // Ignore storage write failures (private mode, quota exceeded, etc.)
+        }
+}
+
+function hydrateRoomMessages() {
+        try {
+                const persisted = localStorage.getItem(
+                        ROOM_MESSAGES_STORAGE_KEY,
+                );
+                if (!persisted) {
+                        return;
+                }
+
+                const parsed = JSON.parse(persisted);
+                if (parsed && typeof parsed === "object") {
+                        roomMessages = parsed;
+                }
+        } catch (_error) {
+                roomMessages = {};
+        }
 }
 
 function sanitizeText(text) {
@@ -429,7 +463,10 @@ function joinRoom(room) {
 
         if (roomMessages[room]) {
                 roomMessages[room].forEach((msg) => {
-                        if (msg.type.startsWith("sticker:")) {
+                        if (
+                                typeof msg.type === "string" &&
+                                msg.type.startsWith("sticker:")
+                        ) {
                                 addStickerMessage(
                                         msg.sender,
                                         msg.message,
@@ -462,6 +499,7 @@ function handleRoomCodeEnter(event) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+        hydrateRoomMessages();
         if ("Notification" in window) {
                 Notification.requestPermission();
         }
