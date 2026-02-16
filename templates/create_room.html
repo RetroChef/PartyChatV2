@@ -130,9 +130,7 @@
 
                 if (payload.is_public) {
                     window.location.href =
-                        "/?joined=" +
-                        encodeURIComponent(payload.room) +
-                        "&public=1";
+                        "/?joined=" + encodeURIComponent(payload.room);
                     return;
                 }
 
@@ -171,9 +169,7 @@
                 }
 
                 window.location.href =
-                    "/?joined=" +
-                    encodeURIComponent(createdRoomName) +
-                    "&public=0";
+                    "/?joined=" + encodeURIComponent(createdRoomName);
             }
         </script>
     </body>

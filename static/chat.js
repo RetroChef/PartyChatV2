@@ -398,9 +398,7 @@ async function joinRoomByCode() {
                         return;
                 }
 
-                if (payload.is_public) {
-                        addRoomToList(payload.room);
-                }
+                addRoomToList(payload.room);
                 joinRoom(payload.room);
                 showRoomFeedback(`Joined room: ${payload.room}`);
                 roomCodeInput.value = "";
@@ -467,7 +465,6 @@ document.addEventListener("DOMContentLoaded", () => {
         if ("Notification" in window) {
                 Notification.requestPermission();
         }
-
         const roomCodeInput = document.getElementById("room-code-input");
         if (roomCodeInput) {
                 roomCodeInput.addEventListener("keypress", handleRoomCodeEnter);
@@ -475,11 +472,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const params = new URLSearchParams(window.location.search);
         const joinedRoom = params.get("joined");
-        const isPublicRoom = params.get("public") !== "0";
         if (joinedRoom) {
-                if (isPublicRoom) {
-                        addRoomToList(joinedRoom);
-                }
+                addRoomToList(joinedRoom);
                 joinRoom(joinedRoom);
                 showRoomFeedback(`Joined room: ${joinedRoom}`);
         }
