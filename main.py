@@ -226,6 +226,9 @@ def join_room_by_code():
         return {'error': 'Invalid room code'}, 404
 
     room_info = room_directory.get(room_name, {})
+    if not room_info.get('is_public', False):
+        save_private_room(room_name)
+
     return {
         'room': room_name,
         'code': room_code,
