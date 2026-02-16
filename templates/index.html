@@ -1,5 +1,4 @@
-
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 	<head>
 		<meta charset="UTF-8" />
@@ -16,10 +15,10 @@
 		<div class="top-bar">
 			<div class="auth-actions">
 				{% if current_user.is_authenticated %}
-					<a href="{{ url_for('logout') }}" class="btn danger">Logout</a>
+				<a href="{{ url_for('logout') }}" class="btn danger">Logout</a>
 				{% else %}
-					<a href="{{ url_for('login') }}" class="btn">Sign In</a>
-					<a href="{{ url_for('register') }}" class="btn primary">Register</a>
+				<a href="{{ url_for('login') }}" class="btn">Sign In</a>
+				<a href="{{ url_for('register') }}" class="btn primary">Register</a>
 				{% endif %}
 			</div>
 		</div>
@@ -27,12 +26,40 @@
 			<div class="sidebar">
 				<div class="room-list">
 					<h3>Rooms</h3>
-					{% for room in rooms %}
-					<div class="room-item" onclick="joinRoom('{{ room }}')">
-						{{ room }}
+					<div id="room-items">
+						{% for room in rooms %}
+						<div class="room-item" onclick="joinRoom('{{ room }}')">
+							{{ room }}
+						</div>
+						{% endfor %}
 					</div>
-					{% endfor %}
+					<button
+						id="toggle-room-access"
+						class="room-access-btn"
+						type="button"
+						onclick="toggleRoomAccess()"
+					>
+						<span class="plus-icon">+</span> Create/Join a Room
+					</button>
+					<div id="room-access-panel" class="room-access-panel hidden">
+						<div class="room-join-row">
+							<input
+								id="room-code-input"
+								type="text"
+								placeholder="Enter room code"
+								maxlength="10"
+							/>
+							<button type="button" onclick="joinRoomByCode()">Join</button>
+						</div>
+						<p class="room-create-hint">
+							Don't want to join a room?
+							<a href="{{ url_for('create_room_page') }}">Create one</a>
+							instead.
+						</p>
+						<p id="room-access-feedback" class="room-feedback"></p>
+					</div>
 				</div>
+
 				<div class="user-list">
 					<h3>Online Users</h3>
 					<div id="active-users"></div>
@@ -61,7 +88,14 @@
 						<div class="reply-preview-label">Replying to</div>
 						<div id="reply-preview-text"></div>
 					</div>
-					<button id="clear-reply" type="button" onclick="clearReply()" aria-label="Clear reply">✕</button>
+					<button
+						id="clear-reply"
+						type="button"
+						onclick="clearReply()"
+						aria-label="Clear reply"
+					>
+						✕
+					</button>
 				</div>
 				<div class="input-area">
 					<button

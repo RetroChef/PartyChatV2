@@ -4,9 +4,8 @@ import random
 import logging
 import uuid
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List
 import re
-
 
 from flask import Flask, render_template, request, session, redirect, url_for, flash
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -17,35 +16,27 @@ from models import db, User
 
 app = Flask(__name__)
 
-
 # Config logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # App Configuration Settings
-app.config.update(
-    SECRET_KEY=os.environ.get('SECRET_KEY', 'dev-key'),
-    SQLALCHEMY_DATABASE_URI='sqlite:///chat.db',
-    SQLALCHEMY_TRACK_MODIFICATIONS=False,
-    DEBUG=os.environ.get('FLASK_DEBUG', 'false').lower() in ('1', 'true'),
-    CORS_ORIGINS='*',
-    CHAT_ROOMS=[
-        'General',
-        'Study Corner',
-        'Games and Entertainment',
-        'Technology Nook'
-    ]
-)
-    # Available chat rooms - stored as constant for now, could be moved to database
-
+app.config.update(SECRET_KEY=os.environ.get('SECRET_KEY', 'dev-key'),
+                  SQLALCHEMY_DATABASE_URI='sqlite:///chat.db',
+                  SQLALCHEMY_TRACK_MODIFICATIONS=False,
+                  DEBUG=os.environ.get('FLASK_DEBUG', 'false').lower()
+                  in ('1', 'true'),
+                  CORS_ORIGINS='*',
+                  CHAT_ROOMS=[
+                      'General', 'Study Corner', 'Games and Entertainment',
+                      'Technology Nook'
+                  ])
+# Available chat rooms - stored as constant for now, could be moved to database
 
 # Handle reverse proxy headers
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
-
-
 
 # Extension
 
@@ -59,12 +50,10 @@ login_manager.init_app(app)
 login_manager.login_view = 'login'
 
 # Initialize SocketIO with appropriate CORS settings
-socketio = SocketIO(
-    app,
-    cors_allowed_origins=app.config['CORS_ORIGINS'],
-    logger=True,
-    engineio_logger=True
-)
+socketio = SocketIO(app,
+                    cors_allowed_origins=app.config['CORS_ORIGINS'],
+                    logger=True,
+                    engineio_logger=True)
 
 
 # Login Loader
@@ -72,9 +61,12 @@ socketio = SocketIO(
 def load_user(user_id):
     return User.query.get(int(user_id))
 
+
 # In-memory storage for active users
 # In production, consider using Redis or another distributed storage
 active_users: Dict[str, dict] = {}
+room_directory: Dict[str, dict] = {}
+room_code_index: Dict[str, str] = {}
 
 ALLOWED_STICKER_EXTENSIONS = {'.gif', '.png', '.jpg', '.jpeg', '.webp'}
 
@@ -96,11 +88,51 @@ def get_available_stickers() -> List[str]:
     return sorted(sticker_files)
 
 
+def generate_room_code(length: int = 6) -> str:
+    alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    while True:
+        code = ''.join(random.choices(alphabet, k=length))
+        if code not in room_code_index:
+            return code
+
+
+def add_room(room_name: str,
+             is_public: bool = True,
+             created_by: str = 'System') -> str:
+    normalized_name = room_name.strip()
+    if not normalized_name:
+        raise ValueError('Room name cannot be empty')
+
+    if normalized_name in room_directory:
+        return room_directory[normalized_name]['code']
+
+    code = generate_room_code()
+    room_directory[normalized_name] = {
+        'code': code,
+        'is_public': is_public,
+        'created_by': created_by,
+        'created_at': datetime.now().isoformat()
+    }
+    room_code_index[code] = normalized_name
+    return code
+
+
+def get_public_rooms() -> List[str]:
+    return [
+        room_name for room_name, meta in room_directory.items()
+        if meta.get('is_public')
+    ]
+
+
+for default_room in app.config['CHAT_ROOMS']:
+    add_room(default_room, is_public=True)
+
 
 def generate_guest_username() -> str:
     """Generate a unique guest username with timestamp to avoid collisions"""
     timestamp = datetime.now().strftime('%H%M')
     return f'Guest{timestamp}{random.randint(1000,9999)}'
+
 
 @app.route('/')
 def index():
@@ -111,14 +143,57 @@ def index():
         if 'username' not in session:
             session['username'] = generate_guest_username()
         username = session['username']
-    
 
-    return render_template(
-        'index.html',
-        username=username,
-        rooms=app.config['CHAT_ROOMS'],
-        stickers=get_available_stickers()
-    )
+    return render_template('index.html',
+                           username=username,
+                           rooms=get_public_rooms(),
+                           stickers=get_available_stickers())
+
+
+@app.route('/create-room')
+def create_room_page():
+    return render_template('create_room.html')
+
+
+@app.route('/api/rooms', methods=['POST'])
+def create_room():
+    room_name = request.form.get('room_name', '').strip()
+    visibility = request.form.get('visibility', 'public').strip().lower()
+    is_public = visibility == 'public'
+
+    if not room_name:
+        return {'error': 'Room name is required'}, 400
+
+    if len(room_name) > 60:
+        return {'error': 'Room name must be 60 characters or fewer'}, 400
+
+    if visibility not in ('public', 'private'):
+        return {'error': 'Invalid visibility setting'}, 400
+
+    created_by = current_user.username if current_user.is_authenticated else session.get(
+        'username', 'Guest')
+    room_code = add_room(room_name, is_public=is_public, created_by=created_by)
+
+    return {'room': room_name, 'code': room_code, 'is_public': is_public}
+
+
+@app.route('/api/rooms/join', methods=['POST'])
+def join_room_by_code():
+    room_code = request.form.get('room_code', '').strip().upper()
+    if not room_code:
+        return {'error': 'Room code is required'}, 400
+
+    room_name = room_code_index.get(room_code)
+    if not room_name:
+        return {'error': 'Invalid room code'}, 404
+
+    room_info = room_directory.get(room_name, {})
+    return {
+        'room': room_name,
+        'code': room_code,
+        'is_public': room_info.get('is_public', False)
+    }
+
 
 @app.route('/register', methods=["GET", "POST"])
 def register():
@@ -161,6 +236,7 @@ def register():
     # GET request
     return render_template('register.html')
 
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -177,6 +253,7 @@ def login():
 
     return render_template('login.html')
 
+
 @app.route('/logout')
 def logout():
     if current_user.is_authenticated:
@@ -185,7 +262,6 @@ def logout():
     session.pop('username', None)
     flash('You have been logged out.', 'success')
     return redirect(url_for('index'))
-
 
 
 @socketio.event
@@ -198,21 +274,22 @@ def connect():
         else:
             if 'username' not in session:
                 session['username'] = generate_guest_username()
-        
+
         active_users[request.sid] = {
             'username': session['username'],
             'connected_at': datetime.now().isoformat()
         }
-        
-        emit('active_users', {
-            'users': [user['username'] for user in active_users.values()]
-        }, broadcast=True)
-        
+
+        emit('active_users',
+             {'users': [user['username'] for user in active_users.values()]},
+             broadcast=True)
+
         logger.info(f"User connected: {session['username']}")
-    
+
     except Exception as e:
         logger.error(f"Connection error: {str(e)}")
         return False
+
 
 @socketio.event
 def disconnect():
@@ -220,60 +297,66 @@ def disconnect():
         if request.sid in active_users:
             username = active_users[request.sid]['username']
             del active_users[request.sid]
-            
+
             emit('active_users', {
                 'users': [user['username'] for user in active_users.values()]
-            }, broadcast=True)
-            
+            },
+                 broadcast=True)
+
             logger.info(f"User disconnected: {username}")
-    
+
     except Exception as e:
         logger.error(f"Disconnection error: {str(e)}")
+
 
 @socketio.on('join')
 def on_join(data: dict):
     try:
         username = session['username']
         room = data['room']
-        
-        if room not in app.config['CHAT_ROOMS']:
+
+        if room not in room_directory:
             logger.warning(f"Invalid room join attempt: {room}")
             return
-        
+
         join_room(room)
         active_users[request.sid]['room'] = room
-        
+
         emit('status', {
             'msg': f'{username} has joined the room.',
             'type': 'join',
             'timestamp': datetime.now().isoformat()
-        }, room=room)
-        
+        },
+             room=room)
+
         logger.info(f"User {username} joined room: {room}")
-    
+
     except Exception as e:
         logger.error(f"Join room error: {str(e)}")
+
 
 @socketio.on('leave')
 def on_leave(data: dict):
     try:
         username = session['username']
         room = data['room']
-        
+
         leave_room(room)
         if request.sid in active_users:
             active_users[request.sid].pop('room', None)
-        
+
         emit('status', {
             'msg': f'{username} has left the room.',
             'type': 'leave',
             'timestamp': datetime.now().isoformat()
-        }, room=room)
-        
+        },
+             room=room)
+
         logger.info(f"User {username} left room: {room}")
-    
+
     except Exception as e:
         logger.error(f"Leave room error: {str(e)}")
+
 
 @socketio.on('message')
 def handle_message(data: dict):
@@ -283,11 +366,11 @@ def handle_message(data: dict):
         msg_type = data.get('type', 'message')
         message = data.get('msg', '').strip()
         reply_to = data.get('reply_to')
-        
+
         timestamp = datetime.now().isoformat()
-        
+
         if msg_type == 'sticker':
-            if room not in app.config['CHAT_ROOMS']:
+            if room not in room_directory:
                 logger.warning(f"Sticker to invalid room: {room}")
                 return
 
@@ -303,7 +386,8 @@ def handle_message(data: dict):
                 'room': room,
                 'file': file,
                 'timestamp': timestamp
-            }, room=room)
+            },
+                 room=room)
 
             logger.info(f"Sticker sent in {room} by {username}")
             return
@@ -324,11 +408,14 @@ def handle_message(data: dict):
                         'to': target_user,
                         'file': file,
                         'timestamp': timestamp
-                    }, room=sid)
-                    logger.info(f"Private sticker sent: {username} -> {target_user}")
+                    },
+                         room=sid)
+                    logger.info(
+                        f"Private sticker sent: {username} -> {target_user}")
                     return
 
-            logger.warning(f"Private sticker failed - user not found: {target_user}")
+            logger.warning(
+                f"Private sticker failed - user not found: {target_user}")
             return
 
         if not message:
@@ -339,7 +426,7 @@ def handle_message(data: dict):
             target_user = data.get('target')
             if not target_user:
                 return
-                
+
             reply_payload = None
             if isinstance(reply_to, dict):
                 reply_payload = {
@@ -357,18 +444,21 @@ def handle_message(data: dict):
                         'to': target_user,
                         'timestamp': timestamp,
                         'reply_to': reply_payload
-                    }, room=sid)
-                    logger.info(f"Private message sent: {username} -> {target_user}")
+                    },
+                         room=sid)
+                    logger.info(
+                        f"Private message sent: {username} -> {target_user}")
                     return
-                    
-            logger.warning(f"Private message failed - user not found: {target_user}")
-        
+
+            logger.warning(
+                f"Private message failed - user not found: {target_user}")
+
         else:
             # Regular room message
-            if room not in app.config['CHAT_ROOMS']:
+            if room not in room_directory:
                 logger.warning(f"Message to invalid room: {room}")
                 return
-                
+
             reply_payload = None
             if isinstance(reply_to, dict):
                 reply_payload = {
@@ -385,20 +475,20 @@ def handle_message(data: dict):
                 'timestamp': timestamp,
                 'type': 'message',
                 'reply_to': reply_payload
-            }, room=room)
-            
+            },
+                 room=room)
+
             logger.info(f"Message sent in {room} by {username}")
 
     except Exception as e:
         logger.error(f"Message handling error: {str(e)}")
 
+
 if __name__ == '__main__':
     # In production, use gunicorn or uwsgi instead
     port = int(os.environ.get('PORT', 5000))
-    socketio.run(
-        app,
-        host='0.0.0.0',
-        port=port,
-        debug=app.config['DEBUG'],
-        use_reloader=app.config['DEBUG']
-    )
+    socketio.run(app,
+                 host='0.0.0.0',
+                 port=port,
+                 debug=app.config['DEBUG'],
+                 use_reloader=app.config['DEBUG'])

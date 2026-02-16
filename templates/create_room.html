@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Create Room</title>
+        <link
+            rel="stylesheet"
+            href="{{ url_for('static', filename='styles.css') }}"
+        />
+    </head>
+    <body>
+        <div class="create-room-page">
+            <div class="create-room-card">
+                <h2>Create a Room</h2>
+                <p class="create-room-subtitle">
+                    Set your room details and invite your friends.
+                </p>
+
+                <label for="room-name">Room name</label>
+                <input
+                    id="room-name"
+                    type="text"
+                    maxlength="60"
+                    placeholder="e.g. Friday Game Night"
+                />
+
+                <label for="room-visibility">Room visibility</label>
+                <select id="room-visibility">
+                    <option value="public">Public (shown in room list)</option>
+                    <option value="private">
+                        Private (invite by room code)
+                    </option>
+                </select>
+
+                <div class="create-room-actions">
+                    <a class="btn" href="{{ url_for('index') }}">Back</a>
+                    <button type="button" onclick="createRoom()">
+                        Create!
+                    </button>
+                </div>
+                <p id="create-room-feedback" class="room-feedback"></p>
+            </div>
+        </div>
+
+        <div
+            id="private-room-modal"
+            class="modal hidden"
+            role="dialog"
+            aria-modal="true"
+        >
+            <div class="modal-content">
+                <h3>Your private room is ready 🎉</h3>
+                <p>Share this room code with your friends:</p>
+                <div class="room-code-box">
+                    <span id="private-room-code"></span>
+                    <button
+                        type="button"
+                        class="copy-btn"
+                        onclick="copyRoomCode()"
+                        title="Copy room code"
+                    >
+                        🔗
+                    </button>
+                </div>
+                <div class="create-room-actions">
+                    <button type="button" onclick="goToCreatedRoom()">
+                        Open Room
+                    </button>
+                    <a class="btn" href="{{ url_for('index') }}">Later</a>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            let createdRoomName = "";
+
+            function setCreateFeedback(message, isError = false) {
+                const feedback = document.getElementById(
+                    "create-room-feedback",
+                );
+                feedback.textContent = message;
+                feedback.classList.toggle("error", isError);
+            }
+
+            async function createRoom() {
+                const roomName = document
+                    .getElementById("room-name")
+                    .value.trim();
+                const visibility =
+                    document.getElementById("room-visibility").value;
+
+                if (!roomName) {
+                    setCreateFeedback("Room name is required.", true);
+                    return;
+                }
+
+                const formData = new URLSearchParams();
+                formData.append("room_name", roomName);
+                formData.append("visibility", visibility);
+
+                let response;
+                let payload;
+                try {
+                    response = await fetch("/api/rooms", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/x-www-form-urlencoded",
+                        },
+                        body: formData,
+                    });
+                    payload = await response.json();
+                } catch (_error) {
+                    setCreateFeedback(
+                        "Unable to reach the server. Please try again.",
+                        true,
+                    );
+                    return;
+                }
+
+                if (!response.ok) {
+                    setCreateFeedback(
+                        payload.error || "Unable to create room.",
+                        true,
+                    );
+                    return;
+                }
+
+                createdRoomName = payload.room;
+
+                if (payload.is_public) {
+                    window.location.href =
+                        "/?joined=" +
+                        encodeURIComponent(payload.room) +
+                        "&public=1";
+                    return;
+                }
+
+                document.getElementById("private-room-code").textContent =
+                    payload.code;
+                document
+                    .getElementById("private-room-modal")
+                    .classList.remove("hidden");
+                setCreateFeedback(
+                    "Private room created! Share your room code.",
+                );
+            }
+
+            async function copyRoomCode() {
+                const code =
+                    document.getElementById("private-room-code").textContent;
+                if (!code) {
+                    return;
+                }
+
+                try {
+                    await navigator.clipboard.writeText(code);
+                    setCreateFeedback("Room code copied to clipboard!");
+                } catch (_error) {
+                    setCreateFeedback(
+                        "Clipboard permission denied. Please copy manually.",
+                        true,
+                    );
+                }
+            }
+
+            function goToCreatedRoom() {
+                if (!createdRoomName) {
+                    window.location.href = "/";
+                    return;
+                }
+
+                window.location.href =
+                    "/?joined=" +
+                    encodeURIComponent(createdRoomName) +
+                    "&public=0";
+            }
+        </script>
+    </body>
+</html>
