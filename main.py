@@ -2,6 +2,7 @@
 import os
 import random
 import logging
+import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 import re
@@ -15,6 +16,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from models import db, User
 
 app = Flask(__name__)
+
 
 # Config logging
 logging.basicConfig(
@@ -32,9 +34,9 @@ app.config.update(
     CORS_ORIGINS='*',
     CHAT_ROOMS=[
         'General',
-        'Education',
-        'Technology',
-        'Gaming'
+        'Study Corner',
+        'Games and Entertainment',
+        'Technology Nook'
     ]
 )
     # Available chat rooms - stored as constant for now, could be moved to database
@@ -280,6 +282,7 @@ def handle_message(data: dict):
         room = data.get('room', 'General')
         msg_type = data.get('type', 'message')
         message = data.get('msg', '').strip()
+        reply_to = data.get('reply_to')
         
         timestamp = datetime.now().isoformat()
         
@@ -294,6 +297,7 @@ def handle_message(data: dict):
                 return
 
             emit('message', {
+                'id': str(uuid.uuid4()),
                 'type': 'sticker',
                 'username': username,
                 'room': room,
@@ -315,6 +319,7 @@ def handle_message(data: dict):
             for sid, user_data in active_users.items():
                 if user_data['username'] == target_user:
                     emit('private_sticker', {
+                        'id': str(uuid.uuid4()),
                         'from': username,
                         'to': target_user,
                         'file': file,
@@ -335,13 +340,23 @@ def handle_message(data: dict):
             if not target_user:
                 return
                 
+            reply_payload = None
+            if isinstance(reply_to, dict):
+                reply_payload = {
+                    'id': reply_to.get('id'),
+                    'sender': reply_to.get('sender'),
+                    'msg': reply_to.get('msg')
+                }
+
             for sid, user_data in active_users.items():
                 if user_data['username'] == target_user:
                     emit('private_message', {
+                        'id': str(uuid.uuid4()),
                         'msg': message,
                         'from': username,
                         'to': target_user,
-                        'timestamp': timestamp
+                        'timestamp': timestamp,
+                        'reply_to': reply_payload
                     }, room=sid)
                     logger.info(f"Private message sent: {username} -> {target_user}")
                     return
@@ -354,12 +369,22 @@ def handle_message(data: dict):
                 logger.warning(f"Message to invalid room: {room}")
                 return
                 
+            reply_payload = None
+            if isinstance(reply_to, dict):
+                reply_payload = {
+                    'id': reply_to.get('id'),
+                    'sender': reply_to.get('sender'),
+                    'msg': reply_to.get('msg')
+                }
+
             emit('message', {
+                'id': str(uuid.uuid4()),
                 'msg': message,
                 'username': username,
                 'room': room,
                 'timestamp': timestamp,
-                'type': 'message'
+                'type': 'message',
+                'reply_to': reply_payload
             }, room=room)
             
             logger.info(f"Message sent in {room} by {username}")

@@ -1,40 +1,143 @@
+* {
+    box-sizing: border-box;
+}
+
 body {
     margin: 0;
-    height: 100vh;
-    background: radial-gradient(circle at top, #1e2a38, #0f172a);
+    min-height: 100vh;
+    background:
+        linear-gradient(rgba(8, 15, 30, 0.72), rgba(8, 15, 30, 0.72)),
+        url('/static/icons/login_registration_bg.png') center center / cover no-repeat fixed;
     display: flex;
     align-items: center;
     justify-content: center;
     font-family: 'Segoe UI', sans-serif;
     color: #e5e7eb;
+    position: relative;
+    overflow: hidden;
+}
+
+.bird-particles {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.bird {
+    position: absolute;
+    width: 18px;
+    height: 10px;
+    border-top: 2px solid rgba(226, 232, 240, 0.85);
+    border-right: 2px solid rgba(226, 232, 240, 0.85);
+    border-radius: 0 14px 0 0;
+    transform-origin: center;
+    opacity: 0.7;
+    animation: bird-flight linear infinite;
+}
+
+.bird::before {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -16px;
+    width: 18px;
+    height: 10px;
+    border-top: 2px solid rgba(226, 232, 240, 0.85);
+    border-left: 2px solid rgba(226, 232, 240, 0.85);
+    border-radius: 14px 0 0 0;
+}
+
+.bird-1 {
+    top: 18%;
+    left: -60px;
+    animation-duration: 20s;
+    animation-delay: 0s;
+}
+
+.bird-2 {
+    top: 34%;
+    left: -90px;
+    transform: scale(1.2);
+    animation-duration: 25s;
+    animation-delay: -7s;
+}
+
+.bird-3 {
+    top: 56%;
+    left: -120px;
+    transform: scale(0.85);
+    animation-duration: 18s;
+    animation-delay: -12s;
+}
+
+.bird-4 {
+    top: 72%;
+    left: -70px;
+    animation-duration: 22s;
+    animation-delay: -4s;
+}
+
+@keyframes bird-flight {
+    0% {
+        transform: translateX(0) translateY(0) scale(1);
+        opacity: 0;
+    }
+    8% {
+        opacity: 0.8;
+    }
+    50% {
+        transform: translateX(58vw) translateY(-16px) scale(1.08);
+    }
+    92% {
+        opacity: 0.8;
+    }
+    100% {
+        transform: translateX(118vw) translateY(8px) scale(0.95);
+        opacity: 0;
+    }
 }
 
 .auth-container {
     width: 100%;
     max-width: 420px;
     padding: 20px;
+    display: flex;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
 }
 
 .auth-card {
-    background: #0b1220;
+    background: rgba(5, 14, 32, 0.88);
+    border: 1px solid rgba(96, 165, 250, 0.12);
     border-radius: 14px;
     padding: 30px;
-    box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+    box-shadow: 0 20px 50px rgba(0,0,0,0.45);
+    width: 100%;
 }
 
 .auth-card h2 {
     margin: 0;
-    font-size: 1.6em;
+    font-size: 1.9em;
 }
 
 .subtitle {
-    font-size: 0.9em;
-    color: #9ca3af;
+    font-size: 0.95em;
+    color: #c5ceda;
     margin-bottom: 20px;
+}
+
+form {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
 }
 
 input {
     width: 100%;
+    max-width: 100%;
     padding: 12px 14px;
     margin-bottom: 14px;
     border-radius: 8px;
@@ -82,7 +185,6 @@ button:hover {
     font-size: 0.85em;
     margin-bottom: 12px;
 }
-
 
 .alert.success { background: #064e3b; }
 .alert.danger { background: #7f1d1d; }

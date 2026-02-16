@@ -56,6 +56,13 @@
 					<p class="sticker-empty">No stickers found.</p>
 					{% endfor %}
 				</div>
+				<div id="reply-preview" class="reply-preview hidden">
+					<div class="reply-preview-content">
+						<div class="reply-preview-label">Replying to</div>
+						<div id="reply-preview-text"></div>
+					</div>
+					<button id="clear-reply" type="button" onclick="clearReply()" aria-label="Clear reply">✕</button>
+				</div>
 				<div class="input-area">
 					<button
 						id="sticker-toggle"
@@ -74,7 +81,7 @@
 						placeholder="Type a message..."
 						onkeypress="handleKeyPress(event)"
 					/>
-					<button onclick="sendMessage()">Send</button>
+					<button id="send-button" onclick="sendMessage()">Send</button>
 				</div>
 			</div>
 		</div>
