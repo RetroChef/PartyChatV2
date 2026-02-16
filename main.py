@@ -124,6 +124,41 @@ def get_public_rooms() -> List[str]:
     ]
 
 
+def get_saved_private_rooms() -> List[str]:
+    private_rooms = session.get('private_rooms', [])
+    if not isinstance(private_rooms, list):
+        return []
+
+    return [
+        room_name for room_name in private_rooms if room_name in room_directory
+        and not room_directory[room_name].get('is_public', False)
+    ]
+
+
+def save_private_room(room_name: str) -> None:
+    if room_name not in room_directory:
+        return
+
+    room_meta = room_directory.get(room_name, {})
+    if room_meta.get('is_public', False):
+        return
+
+    private_rooms = get_saved_private_rooms()
+    if room_name in private_rooms:
+        return
+
+    private_rooms.append(room_name)
+    session['private_rooms'] = private_rooms
+
+
+def get_rooms_for_sidebar() -> List[str]:
+    rooms = list(get_public_rooms())
+    for private_room in get_saved_private_rooms():
+        if private_room not in rooms:
+            rooms.append(private_room)
+    return rooms
+
+
 for default_room in app.config['CHAT_ROOMS']:
     add_room(default_room, is_public=True)
 
@@ -146,7 +181,7 @@ def index():
 
     return render_template('index.html',
                            username=username,
-                           rooms=get_public_rooms(),
+                           rooms=get_rooms_for_sidebar(),
                            stickers=get_available_stickers())
 
 
@@ -173,6 +208,9 @@ def create_room():
     created_by = current_user.username if current_user.is_authenticated else session.get(
         'username', 'Guest')
     room_code = add_room(room_name, is_public=is_public, created_by=created_by)
+
+    if not is_public:
+        save_private_room(room_name)
 
     return {'room': room_name, 'code': room_code, 'is_public': is_public}
 
