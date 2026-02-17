@@ -65,6 +65,31 @@ h2 {
     cursor: pointer;
 }
 
+.room-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.room-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.room-delete-btn {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 0.9rem;
+    opacity: 0.65;
+}
+
+.room-delete-btn:hover {
+    opacity: 1;
+}
+
 .room-item:hover,
 .user-item:hover {
     background: var(--light);
