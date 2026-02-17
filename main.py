@@ -67,6 +67,7 @@ def load_user(user_id):
 active_users: Dict[str, dict] = {}
 room_directory: Dict[str, dict] = {}
 room_code_index: Dict[str, str] = {}
+MESSAGE_POLICIES = {'everyone', 'host_mods_only'}
 
 ALLOWED_STICKER_EXTENSIONS = {'.gif', '.png', '.jpg', '.jpeg', '.webp'}
 
@@ -98,20 +99,29 @@ def generate_room_code(length: int = 6) -> str:
 
 def add_room(room_name: str,
              is_public: bool = True,
-             created_by: str = 'System') -> str:
+             created_by: str = 'System',
+             message_policy: str = 'everyone') -> str:
     normalized_name = room_name.strip()
     if not normalized_name:
         raise ValueError('Room name cannot be empty')
 
     if normalized_name in room_directory:
-        return room_directory[normalized_name]['code']
+        room_meta = room_directory[normalized_name]
+        room_meta.setdefault('message_policy', 'everyone')
+        room_meta.setdefault('moderators', [])
+        return room_meta['code']
+
+    if message_policy not in MESSAGE_POLICIES:
+        raise ValueError('Invalid message policy')
 
     code = generate_room_code()
     room_directory[normalized_name] = {
         'code': code,
         'is_public': is_public,
         'created_by': created_by,
-        'created_at': datetime.now().isoformat()
+        'created_at': datetime.now().isoformat(),
+        'message_policy': message_policy,
+        'moderators': []
     }
     room_code_index[code] = normalized_name
     return code
@@ -123,7 +133,7 @@ def get_public_rooms() -> List[str]:
         if meta.get('is_public')
     ]
 
-
+# tes
 def get_saved_private_rooms() -> List[str]:
     private_rooms = session.get('private_rooms', [])
     if not isinstance(private_rooms, list):
@@ -157,6 +167,36 @@ def get_rooms_for_sidebar() -> List[str]:
         if private_room not in rooms:
             rooms.append(private_room)
     return rooms
+
+
+def get_room_message_policy(room_name: str) -> str:
+    return room_directory.get(room_name, {}).get('message_policy', 'everyone')
+
+
+def can_user_send_to_room(room_name: str, username: str) -> bool:
+    room_meta = room_directory.get(room_name, {})
+    if room_meta.get('message_policy', 'everyone') == 'everyone':
+        return True
+
+    if username == room_meta.get('created_by'):
+        return True
+
+    moderators = room_meta.get('moderators', [])
+    if isinstance(moderators, list) and username in moderators:
+        return True
+
+    user_meta = active_users.get(request.sid, {})
+    return bool(user_meta.get('is_moderator', False))
+
+
+def emit_room_state(room_name: str, username: str) -> None:
+    policy = get_room_message_policy(room_name)
+    emit('room_state', {
+        'room': room_name,
+        'message_policy': policy,
+        'can_send_messages': can_user_send_to_room(room_name, username)
+    },
+         room=request.sid)
 
 
 for default_room in app.config['CHAT_ROOMS']:
@@ -194,6 +234,7 @@ def create_room_page():
 def create_room():
     room_name = request.form.get('room_name', '').strip()
     visibility = request.form.get('visibility', 'public').strip().lower()
+    message_policy = request.form.get('message_policy', 'everyone').strip().lower()
     is_public = visibility == 'public'
 
     if not room_name:
@@ -204,15 +245,23 @@ def create_room():
 
     if visibility not in ('public', 'private'):
         return {'error': 'Invalid visibility setting'}, 400
+    if message_policy not in MESSAGE_POLICIES:
+        return {'error': 'Invalid message policy setting'}, 400
 
     created_by = current_user.username if current_user.is_authenticated else session.get(
         'username', 'Guest')
-    room_code = add_room(room_name, is_public=is_public, created_by=created_by)
+    room_code = add_room(room_name, 
+                         is_public=is_public, 
+                         created_by=created_by,
+                         message_policy=message_policy)
 
     if not is_public:
         save_private_room(room_name)
 
-    return {'room': room_name, 'code': room_code, 'is_public': is_public}
+    return {'room': room_name, 
+            'code': room_code, 
+            'is_public': is_public,
+            'message_policy': message_policy}
 
 
 @app.route('/api/rooms/join', methods=['POST'])
@@ -232,7 +281,8 @@ def join_room_by_code():
     return {
         'room': room_name,
         'code': room_code,
-        'is_public': room_info.get('is_public', False)
+        'is_public': room_info.get('is_public', False),
+        'message_policy': room_info.get('message_policy', 'everyone')
     }
 
 
@@ -362,6 +412,7 @@ def on_join(data: dict):
 
         join_room(room)
         active_users[request.sid]['room'] = room
+        emit_room_state(room, username)
 
         emit('status', {
             'msg': f'{username} has joined the room.',
@@ -414,11 +465,21 @@ def handle_message(data: dict):
             if room not in room_directory:
                 logger.warning(f"Sticker to invalid room: {room}")
                 return
-
+            
+            if not can_user_send_to_room(room, username):
+                emit('message_error', {
+                    'error':
+                    'This room only allows messages from the host and moderators.',
+                    'room': room
+                },
+                     room=request.sid)
+                return
+            
             file = data.get('file')
             if not file:
                 logger.warning("Sticker missing file data")
                 return
+
 
             emit('message', {
                 'id': str(uuid.uuid4()),
@@ -498,6 +559,15 @@ def handle_message(data: dict):
             # Regular room message
             if room not in room_directory:
                 logger.warning(f"Message to invalid room: {room}")
+                return
+            
+            if not can_user_send_to_room(room, username):
+                emit('message_error', {
+                    'error':
+                    'This room only allows messages from the host and moderators.',
+                    'room': room
+                },
+                     room=request.sid)
                 return
 
             reply_payload = None

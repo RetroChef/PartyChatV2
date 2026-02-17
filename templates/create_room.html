@@ -33,6 +33,12 @@
                     </option>
                 </select>
 
+                <label for="message-policy">Who can send room messages</label>
+                <select id="message-policy">
+                    <option value="everyone">Everyone (default)</option>
+                    <option value="host_mods_only">Host and moderators only</option>
+                </select>
+
                 <div class="create-room-actions">
                     <a class="btn" href="{{ url_for('index') }}">Back</a>
                     <button type="button" onclick="createRoom()">
@@ -89,6 +95,8 @@
                     .value.trim();
                 const visibility =
                     document.getElementById("room-visibility").value;
+                const messagePolicy =
+                    document.getElementById("message-policy").value;
 
                 if (!roomName) {
                     setCreateFeedback("Room name is required.", true);
@@ -98,6 +106,7 @@
                 const formData = new URLSearchParams();
                 formData.append("room_name", roomName);
                 formData.append("visibility", visibility);
+                formData.append("message_policy", messagePolicy);
 
                 let response;
                 let payload;

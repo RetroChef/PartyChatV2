@@ -3,6 +3,9 @@ let currentRoom = "General";
 let username = document.getElementById("username").textContent;
 let roomMessages = {};
 let replyContext = null;
+let roomPolicies = {};
+let canSendInCurrentRoom = true;
+
 
 const ROOM_MESSAGES_STORAGE_KEY = `partychat:roomMessages:${username}`;
 
@@ -51,6 +54,25 @@ socket.on("private_sticker", (data) => {
 
 socket.on("status", (data) => {
         addMessage({ sender: "System", message: data.msg, type: "system" });
+});
+
+socket.on("room_state", (data) => {
+        if (!data || !data.room) {
+                return;
+        }
+
+        roomPolicies[data.room] = data.message_policy || "everyone";
+        if (data.room === currentRoom) {
+                canSendInCurrentRoom = data.can_send_messages !== false;
+                updateComposerAccess();
+        }
+});
+
+socket.on("message_error", (data) => {
+        const errorText = data && data.error
+                ? data.error
+                : "You are not allowed to send messages in this room.";
+        showRoomFeedback(errorText, true);
 });
 
 socket.on("active_users", (data) => {
@@ -293,6 +315,14 @@ function sendMessage() {
         const input = document.getElementById("message");
         const message = input.value.trim();
 
+        if (!canSendInCurrentRoom) {
+                showRoomFeedback(
+                        "This room only allows messages from the host and moderators.",
+                        true,
+                );
+                return;
+        }
+
         if (!message) return;
 
         if (message.startsWith("@")) {
@@ -341,6 +371,14 @@ function getPrivateTargetFromInput() {
 
 function sendSticker(file) {
         const privateTarget = getPrivateTargetFromInput();
+        
+        if (!privateTarget && !canSendInCurrentRoom) {
+                showRoomFeedback(
+                        "This room only allows messages from the host and moderators.",
+                        true,
+                );
+                return;
+        }
 
         if (privateTarget) {
                 addStickerMessage(username, file, "own");
@@ -431,7 +469,7 @@ async function joinRoomByCode() {
                         );
                         return;
                 }
-
+                roomPolicies[payload.room] = payload.message_policy || "everyone";
                 addRoomToList(payload.room);
                 joinRoom(payload.room);
                 showRoomFeedback(`Joined room: ${payload.room}`);
@@ -452,6 +490,8 @@ function toggleStickerBar() {
 function joinRoom(room) {
         socket.emit("leave", { room: currentRoom });
         currentRoom = room;
+        canSendInCurrentRoom = true;
+        updateComposerAccess();
         socket.emit("join", { room });
 
         highlightActiveRoom(room);
@@ -478,6 +518,23 @@ function joinRoom(room) {
                         }
                 });
         }
+}
+
+function updateComposerAccess() {
+        const messageInput = document.getElementById("message");
+        const sendButton = document.getElementById("send-button");
+        const stickerButton = document.getElementById("sticker-toggle");
+
+        if (!messageInput || !sendButton || !stickerButton) {
+                return;
+        }
+
+        messageInput.disabled = !canSendInCurrentRoom;
+        sendButton.disabled = !canSendInCurrentRoom;
+        stickerButton.disabled = !canSendInCurrentRoom;
+        messageInput.placeholder = canSendInCurrentRoom
+                ? "Type a message..."
+                : "Only the room host and moderators can send messages";
 }
 
 function insertPrivateMessage(user) {
@@ -511,6 +568,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const params = new URLSearchParams(window.location.search);
         const joinedRoom = params.get("joined");
         if (joinedRoom) {
+                roomPolicies[joinedRoom] = roomPolicies[joinedRoom] || "everyone";
                 addRoomToList(joinedRoom);
                 joinRoom(joinedRoom);
                 showRoomFeedback(`Joined room: ${joinedRoom}`);
