@@ -28,8 +28,16 @@
 					<h3>Rooms</h3>
 					<div id="room-items">
 						{% for room in rooms %}
-						<div class="room-item" onclick="joinRoom('{{ room }}')">
-							{{ room }}
+						<div class="room-item" data-room-name="{{ room }}" onclick="joinRoom('{{ room }}')">
+							<span class="room-name">{{ room }}</span>
+							{% if room in owned_rooms %}
+							<button
+								type="button"
+								class="room-delete-btn"
+								onclick="deleteRoomFromList(event, '{{ room }}')"
+								title="Delete room"
+							>🗑</button>
+							{% endif %}
 						</div>
 						{% endfor %}
 					</div>

@@ -39,6 +39,22 @@
                     <option value="host_mods_only">Host and moderators only</option>
                 </select>
 
+                <label for="expires-in">Room expires in</label>
+                <select id="expires-in">
+                    <option value="never">Never</option>
+                    <option value="1_day">1 day</option>
+                    <option value="7_days">7 days</option>
+                    <option value="30_days">30 days</option>
+                </select>
+
+                <label for="archive-on-inactive">Archive on inactivity (optional)</label>
+                <select id="archive-on-inactive">
+                    <option value="none">Disabled</option>
+                    <option value="1_day">1 day inactive</option>
+                    <option value="7_days">7 days inactive</option>
+                    <option value="30_days">30 days inactive</option>
+                </select>
+
                 <div class="create-room-actions">
                     <a class="btn" href="{{ url_for('index') }}">Back</a>
                     <button type="button" onclick="createRoom()">
@@ -97,6 +113,8 @@
                     document.getElementById("room-visibility").value;
                 const messagePolicy =
                     document.getElementById("message-policy").value;
+                const expiresIn = document.getElementById("expires-in").value;
+                const archiveOnInactive = document.getElementById("archive-on-inactive").value;
 
                 if (!roomName) {
                     setCreateFeedback("Room name is required.", true);
@@ -107,6 +125,8 @@
                 formData.append("room_name", roomName);
                 formData.append("visibility", visibility);
                 formData.append("message_policy", messagePolicy);
+                formData.append("expires_in", expiresIn);
+                formData.append("archive_on_inactive", archiveOnInactive);
 
                 let response;
                 let payload;
@@ -139,7 +159,8 @@
 
                 if (payload.is_public) {
                     window.location.href =
-                        "/?joined=" + encodeURIComponent(payload.room);
+                        "/?joined=" + encodeURIComponent(payload.room) +
+                        "&created=" + encodeURIComponent(payload.room);
                     return;
                 }
 
@@ -171,6 +192,7 @@
                 }
             }
 
+
             function goToCreatedRoom() {
                 if (!createdRoomName) {
                     window.location.href = "/";
@@ -178,7 +200,8 @@
                 }
 
                 window.location.href =
-                    "/?joined=" + encodeURIComponent(createdRoomName);
+                    "/?joined=" + encodeURIComponent(createdRoomName) +
+                    "&created=" + encodeURIComponent(createdRoomName);
             }
         </script>
     </body>

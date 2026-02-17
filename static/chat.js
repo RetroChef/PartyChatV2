@@ -1,6 +1,7 @@
 let socket = io();
 let currentRoom = "General";
 let username = document.getElementById("username").textContent;
+let ownedRooms = new Set();
 let roomMessages = {};
 let replyContext = null;
 let roomPolicies = {};
@@ -73,6 +74,18 @@ socket.on("message_error", (data) => {
                 ? data.error
                 : "You are not allowed to send messages in this room.";
         showRoomFeedback(errorText, true);
+});
+
+socket.on("room_expired", (data) => {
+        if (!data || !data.room) {
+                return;
+        }
+
+        showRoomFeedback(`Room expired: ${data.room}`, true);
+        if (currentRoom === data.room) {
+                currentRoom = "General";
+                joinRoom("General");
+        }
 });
 
 socket.on("active_users", (data) => {
@@ -407,24 +420,90 @@ function showRoomFeedback(message, isError = false) {
         feedback.classList.toggle("error", isError);
 }
 
-function addRoomToList(room) {
+function addRoomToList(room, canDelete = false) {
         const roomItems = document.getElementById("room-items");
         if (!roomItems) {
                 return;
         }
 
         const existing = Array.from(
-                roomItems.querySelectorAll(".room-item"),
-        ).find((item) => item.textContent.trim() === room);
+                roomItems.querySelectorAll(".room-item[data-room-name]"),
+        ).find((item) => item.dataset.roomName === room);
         if (existing) {
+                if (canDelete && !existing.querySelector(".room-delete-btn")) {
+                        const deleteButton = document.createElement("button");
+                        deleteButton.type = "button";
+                        deleteButton.className = "room-delete-btn";
+                        deleteButton.title = "Delete room";
+                        deleteButton.textContent = "🗑";
+                        deleteButton.onclick = (event) =>
+                                deleteRoomFromList(event, room);
+                        existing.appendChild(deleteButton);
+                }
                 return;
         }
 
         const roomDiv = document.createElement("div");
         roomDiv.className = "room-item";
-        roomDiv.textContent = room;
+        roomDiv.dataset.roomName = room;
         roomDiv.onclick = () => joinRoom(room);
+
+        const roomName = document.createElement("span");
+        roomName.className = "room-name";
+        roomName.textContent = room;
+        roomDiv.appendChild(roomName);
+
+        if (canDelete) {
+                const deleteButton = document.createElement("button");
+                deleteButton.type = "button";
+                deleteButton.className = "room-delete-btn";
+                deleteButton.title = "Delete room";
+                deleteButton.textContent = "🗑";
+                deleteButton.onclick = (event) => deleteRoomFromList(event, room);
+                roomDiv.appendChild(deleteButton);
+        }
+
         roomItems.appendChild(roomDiv);
+}
+
+async function deleteRoomFromList(event, room) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const formData = new URLSearchParams();
+        formData.append("room_name", room);
+
+        try {
+                const response = await fetch("/api/rooms/delete", {
+                        method: "POST",
+                        headers: {
+                                "Content-Type": "application/x-www-form-urlencoded",
+                        },
+                        body: formData,
+                });
+                const payload = await response.json();
+
+                if (!response.ok) {
+                        showRoomFeedback(payload.error || "Unable to delete room.", true);
+                        return;
+                }
+
+                ownedRooms.delete(room);
+                const roomItem = document.querySelector(
+                        `.room-item[data-room-name="${room}"]`,
+                );
+                if (roomItem) {
+                        roomItem.remove();
+                }
+
+                if (currentRoom === room) {
+                        joinRoom("General");
+                }
+
+                showRoomFeedback(`Deleted room: ${room}`);
+        } catch (_error) {
+                showRoomFeedback("Unable to delete room.", true);
+        }
 }
 
 function toggleRoomAccess() {
@@ -470,7 +549,7 @@ async function joinRoomByCode() {
                         return;
                 }
                 roomPolicies[payload.room] = payload.message_policy || "everyone";
-                addRoomToList(payload.room);
+                addRoomToList(payload.room, ownedRooms.has(payload.room));
                 joinRoom(payload.room);
                 showRoomFeedback(`Joined room: ${payload.room}`);
                 roomCodeInput.value = "";
@@ -557,6 +636,12 @@ function handleRoomCodeEnter(event) {
 
 document.addEventListener("DOMContentLoaded", () => {
         hydrateRoomMessages();
+
+        document.querySelectorAll(".room-item[data-room-name]").forEach((item) => {
+                if (item.querySelector(".room-delete-btn")) {
+                        ownedRooms.add(item.dataset.roomName);
+                }
+        });
         if ("Notification" in window) {
                 Notification.requestPermission();
         }
@@ -567,9 +652,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const params = new URLSearchParams(window.location.search);
         const joinedRoom = params.get("joined");
+        const createdRoom = params.get("created");
         if (joinedRoom) {
+                if (createdRoom === joinedRoom) {
+                        ownedRooms.add(joinedRoom);
+                }
                 roomPolicies[joinedRoom] = roomPolicies[joinedRoom] || "everyone";
-                addRoomToList(joinedRoom);
+                addRoomToList(joinedRoom, ownedRooms.has(joinedRoom));
                 joinRoom(joinedRoom);
                 showRoomFeedback(`Joined room: ${joinedRoom}`);
         }
@@ -578,7 +667,7 @@ document.addEventListener("DOMContentLoaded", () => {
 function highlightActiveRoom(room) {
         document.querySelectorAll(".room-item").forEach((item) => {
                 item.classList.remove("active-room");
-                if (item.textContent.trim() === room) {
+                if (item.dataset.roomName === room) {
                         item.classList.add("active-room");
                 }
         });

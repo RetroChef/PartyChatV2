@@ -3,7 +3,7 @@ import os
 import random
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List
 import re
 
@@ -68,6 +68,18 @@ active_users: Dict[str, dict] = {}
 room_directory: Dict[str, dict] = {}
 room_code_index: Dict[str, str] = {}
 MESSAGE_POLICIES = {'everyone', 'host_mods_only'}
+EXPIRATION_OPTIONS = {
+    'never': None,
+    '1_day': timedelta(days=1),
+    '7_days': timedelta(days=7),
+    '30_days': timedelta(days=30)
+}
+INACTIVITY_OPTIONS = {
+    'none': None,
+    '1_day': timedelta(days=1),
+    '7_days': timedelta(days=7),
+    '30_days': timedelta(days=30)
+}
 
 ALLOWED_STICKER_EXTENSIONS = {'.gif', '.png', '.jpg', '.jpeg', '.webp'}
 
@@ -100,7 +112,9 @@ def generate_room_code(length: int = 6) -> str:
 def add_room(room_name: str,
              is_public: bool = True,
              created_by: str = 'System',
-             message_policy: str = 'everyone') -> str:
+             message_policy: str = 'everyone',
+             expires_in: str = 'never',
+             archive_on_inactive: str = 'none') -> str:
     normalized_name = room_name.strip()
     if not normalized_name:
         raise ValueError('Room name cannot be empty')
@@ -109,25 +123,96 @@ def add_room(room_name: str,
         room_meta = room_directory[normalized_name]
         room_meta.setdefault('message_policy', 'everyone')
         room_meta.setdefault('moderators', [])
+        room_meta.setdefault('expires_at', None)
+        room_meta.setdefault('last_activity_at', room_meta.get('created_at'))
+        room_meta.setdefault('archive_on_inactive', 'none')
         return room_meta['code']
 
     if message_policy not in MESSAGE_POLICIES:
         raise ValueError('Invalid message policy')
+    if expires_in not in EXPIRATION_OPTIONS:
+        raise ValueError('Invalid room expiration setting')
+    if archive_on_inactive not in INACTIVITY_OPTIONS:
+        raise ValueError('Invalid room inactivity setting')
 
+    now = datetime.now()
+    expires_delta = EXPIRATION_OPTIONS[expires_in]
+    expires_at = (now + expires_delta).isoformat() if expires_delta else None
     code = generate_room_code()
     room_directory[normalized_name] = {
         'code': code,
         'is_public': is_public,
         'created_by': created_by,
-        'created_at': datetime.now().isoformat(),
+        'created_at': now.isoformat(),
+        'expires_at': expires_at,
+        'last_activity_at': now.isoformat(),
+        'archive_on_inactive': archive_on_inactive,
         'message_policy': message_policy,
         'moderators': []
     }
     room_code_index[code] = normalized_name
     return code
 
+def parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def is_room_expired(room_name: str) -> bool:
+    room_meta = room_directory.get(room_name)
+    if not room_meta:
+        return True
+
+    now = datetime.now()
+    expires_at = parse_iso_datetime(room_meta.get('expires_at'))
+    if expires_at and now >= expires_at:
+        return True
+
+    inactivity_key = room_meta.get('archive_on_inactive', 'none')
+    inactivity_delta = INACTIVITY_OPTIONS.get(inactivity_key)
+    if inactivity_delta:
+        last_activity = parse_iso_datetime(room_meta.get('last_activity_at'))
+        if not last_activity:
+            last_activity = parse_iso_datetime(room_meta.get('created_at'))
+        if last_activity and now >= last_activity + inactivity_delta:
+            return True
+
+    return False
+
+
+def remove_room(room_name: str) -> None:
+    room_meta = room_directory.pop(room_name, None)
+    if not room_meta:
+        return
+
+    room_code = room_meta.get('code')
+    if room_code:
+        room_code_index.pop(room_code, None)
+
+
+def cleanup_expired_rooms() -> None:
+    expired_rooms = [room_name for room_name in room_directory if is_room_expired(room_name)]
+    for room_name in expired_rooms:
+        remove_room(room_name)
+
+    private_rooms = session.get('private_rooms')
+    if isinstance(private_rooms, list):
+        session['private_rooms'] = [
+            room_name for room_name in private_rooms if room_name in room_directory
+        ]
+
+
+def touch_room_activity(room_name: str) -> None:
+    if room_name in room_directory:
+        room_directory[room_name]['last_activity_at'] = datetime.now().isoformat()
+
 
 def get_public_rooms() -> List[str]:
+    cleanup_expired_rooms()
     return [
         room_name for room_name, meta in room_directory.items()
         if meta.get('is_public')
@@ -135,6 +220,7 @@ def get_public_rooms() -> List[str]:
 
 # tes
 def get_saved_private_rooms() -> List[str]:
+    cleanup_expired_rooms()
     private_rooms = session.get('private_rooms', [])
     if not isinstance(private_rooms, list):
         return []
@@ -162,12 +248,21 @@ def save_private_room(room_name: str) -> None:
 
 
 def get_rooms_for_sidebar() -> List[str]:
+    cleanup_expired_rooms()
     rooms = list(get_public_rooms())
     for private_room in get_saved_private_rooms():
         if private_room not in rooms:
             rooms.append(private_room)
     return rooms
 
+
+
+
+def get_owned_rooms(username: str) -> List[str]:
+    return [
+        room_name for room_name, meta in room_directory.items()
+        if meta.get('created_by') == username
+    ]
 
 def get_room_message_policy(room_name: str) -> str:
     return room_directory.get(room_name, {}).get('message_policy', 'everyone')
@@ -211,6 +306,7 @@ def generate_guest_username() -> str:
 
 @app.route('/')
 def index():
+    cleanup_expired_rooms()
     if current_user.is_authenticated:
         username = current_user.username
 
@@ -222,19 +318,24 @@ def index():
     return render_template('index.html',
                            username=username,
                            rooms=get_rooms_for_sidebar(),
+                           owned_rooms=get_owned_rooms(username),
                            stickers=get_available_stickers())
 
 
 @app.route('/create-room')
 def create_room_page():
+    cleanup_expired_rooms()
     return render_template('create_room.html')
 
 
 @app.route('/api/rooms', methods=['POST'])
 def create_room():
+    cleanup_expired_rooms()
     room_name = request.form.get('room_name', '').strip()
     visibility = request.form.get('visibility', 'public').strip().lower()
     message_policy = request.form.get('message_policy', 'everyone').strip().lower()
+    expires_in = request.form.get('expires_in', 'never').strip().lower()
+    archive_on_inactive = request.form.get('archive_on_inactive', 'none').strip().lower()
     is_public = visibility == 'public'
 
     if not room_name:
@@ -247,25 +348,52 @@ def create_room():
         return {'error': 'Invalid visibility setting'}, 400
     if message_policy not in MESSAGE_POLICIES:
         return {'error': 'Invalid message policy setting'}, 400
+    if expires_in not in EXPIRATION_OPTIONS:
+        return {'error': 'Invalid expires_in setting'}, 400
+    if archive_on_inactive not in INACTIVITY_OPTIONS:
+        return {'error': 'Invalid archive_on_inactive setting'}, 400
 
     created_by = current_user.username if current_user.is_authenticated else session.get(
         'username', 'Guest')
-    room_code = add_room(room_name, 
-                         is_public=is_public, 
+    room_code = add_room(room_name,
+                         is_public=is_public,
                          created_by=created_by,
-                         message_policy=message_policy)
+                         message_policy=message_policy,
+                         expires_in=expires_in,
+                         archive_on_inactive=archive_on_inactive)
 
     if not is_public:
         save_private_room(room_name)
 
-    return {'room': room_name, 
-            'code': room_code, 
+    return {'room': room_name,
+            'code': room_code,
             'is_public': is_public,
-            'message_policy': message_policy}
+            'message_policy': message_policy,
+            'expires_at': room_directory[room_name].get('expires_at')}
+
+
+@app.route('/api/rooms/delete', methods=['POST'])
+def delete_room():
+    cleanup_expired_rooms()
+    room_name = request.form.get('room_name', '').strip()
+    if not room_name:
+        return {'error': 'Room name is required'}, 400
+
+    room_meta = room_directory.get(room_name)
+    if not room_meta:
+        return {'error': 'Room not found'}, 404
+
+    requester = current_user.username if current_user.is_authenticated else session.get('username')
+    if room_meta.get('created_by') != requester:
+        return {'error': 'Only the room creator can delete this room'}, 403
+
+    remove_room(room_name)
+    return {'deleted': room_name}
 
 
 @app.route('/api/rooms/join', methods=['POST'])
 def join_room_by_code():
+    cleanup_expired_rooms()
     room_code = request.form.get('room_code', '').strip().upper()
     if not room_code:
         return {'error': 'Room code is required'}, 400
@@ -275,6 +403,10 @@ def join_room_by_code():
         return {'error': 'Invalid room code'}, 404
 
     room_info = room_directory.get(room_name, {})
+    if is_room_expired(room_name):
+        remove_room(room_name)
+        return {'error': 'This room has expired'}, 410
+
     if not room_info.get('is_public', False):
         save_private_room(room_name)
 
@@ -358,6 +490,7 @@ def logout():
 @socketio.event
 def connect():
     try:
+        cleanup_expired_rooms()
         if current_user.is_authenticated:
             username = current_user.username
             session['username'] = username
@@ -405,9 +538,14 @@ def on_join(data: dict):
     try:
         username = session['username']
         room = data['room']
+        cleanup_expired_rooms()
 
         if room not in room_directory:
             logger.warning(f"Invalid room join attempt: {room}")
+            return
+        if is_room_expired(room):
+            remove_room(room)
+            emit('room_expired', {'room': room}, room=request.sid)
             return
 
         join_room(room)
@@ -465,6 +603,10 @@ def handle_message(data: dict):
             if room not in room_directory:
                 logger.warning(f"Sticker to invalid room: {room}")
                 return
+            if is_room_expired(room):
+                remove_room(room)
+                emit('room_expired', {'room': room}, room=request.sid)
+                return
             
             if not can_user_send_to_room(room, username):
                 emit('message_error', {
@@ -490,6 +632,7 @@ def handle_message(data: dict):
                 'timestamp': timestamp
             },
                  room=room)
+            touch_room_activity(room)
 
             logger.info(f"Sticker sent in {room} by {username}")
             return
@@ -560,6 +703,10 @@ def handle_message(data: dict):
             if room not in room_directory:
                 logger.warning(f"Message to invalid room: {room}")
                 return
+            if is_room_expired(room):
+                remove_room(room)
+                emit('room_expired', {'room': room}, room=request.sid)
+                return
             
             if not can_user_send_to_room(room, username):
                 emit('message_error', {
@@ -588,6 +735,7 @@ def handle_message(data: dict):
                 'reply_to': reply_payload
             },
                  room=room)
+            touch_room_activity(room)
 
             logger.info(f"Message sent in {room} by {username}")
 
