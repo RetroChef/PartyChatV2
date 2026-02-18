@@ -121,6 +121,15 @@ h2 {
     background: white;
 }
 
+
+#chat.private-thread {
+    background: #f5fff7;
+    border-top: 3px solid var(--success);
+}
+
+.message.thread-private {
+    box-shadow: inset 0 0 0 1px rgba(46, 204, 113, 0.28);
+}
 .message {
     margin: 10px 0;
     padding: 12px 15px;

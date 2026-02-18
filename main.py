@@ -11,7 +11,7 @@ from flask import Flask, render_template, request, session, redirect, url_for, f
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_login import LoginManager, login_user, current_user, logout_user, login_required
 from werkzeug.middleware.proxy_fix import ProxyFix
-from sqlalchemy import inspect, text, func, distinct
+from sqlalchemy import inspect, text, func, distinct, or_
 from models import db, User, Conversation, ConversationParticipant, Message
 
 app = Flask(__name__)
@@ -296,6 +296,26 @@ def get_user_by_username(username: str) -> User | None:
     return User.query.filter_by(username=username).first()
 
 
+def get_user_by_id(user_id: int | str | None) -> User | None:
+    if user_id in (None, ''):
+        return None
+    try:
+        normalized = int(user_id)
+    except (TypeError, ValueError):
+        return None
+    return User.query.get(normalized)
+
+
+def get_private_conversation_partner(conversation_id: int,
+                                     viewer_id: int) -> User | None:
+    partner = db.session.query(User).join(
+        ConversationParticipant,
+        ConversationParticipant.user_id == User.id).filter(
+            ConversationParticipant.conversation_id == conversation_id,
+            ConversationParticipant.user_id != viewer_id).first()
+    return partner
+
+
 def get_or_create_direct_conversation(sender_id: int,
                                       recipient_id: int) -> Conversation:
     participant_ids = sorted([sender_id, recipient_id])
@@ -522,6 +542,136 @@ def join_room_by_code():
         'code': room_code,
         'is_public': room_info.get('is_public', False),
         'message_policy': room_info.get('message_policy', 'everyone')
+    }
+
+
+@app.route('/api/users', methods=['GET'])
+@login_required
+def list_chat_users():
+    search_query = request.args.get('q', '').strip()
+
+    users_query = User.query.filter(User.id != current_user.id)
+    if search_query:
+        pattern = f'%{search_query}%'
+        users_query = users_query.filter(
+            or_(User.username.ilike(pattern), User.display_name.ilike(pattern)))
+
+    users = users_query.order_by(User.username.asc()).limit(50).all()
+    return {
+        'users': [{
+            'id': user.id,
+            'username': user.username,
+            'display_name': user.display_name
+        } for user in users]
+    }
+
+
+@app.route('/api/private-chats/start', methods=['POST'])
+@login_required
+def start_private_chat():
+    payload = request.get_json(silent=True) or request.form
+    target_id = payload.get('target_id')
+    target_username = str(payload.get('target_username', '')).strip()
+
+    target_user = None
+    if target_id not in (None, ''):
+        target_user = get_user_by_id(target_id)
+    if target_user is None and target_username:
+        target_user = get_user_by_username(target_username)
+
+    if not target_user:
+        return {'error': 'Target user not found.'}, 404
+    if target_user.id == current_user.id:
+        return {'error': 'You cannot start a private chat with yourself.'}, 400
+
+    conversation = get_or_create_direct_conversation(current_user.id,
+                                                     target_user.id)
+    db.session.commit()
+
+    return {
+        'conversation_id': conversation.id,
+        'target': {
+            'id': target_user.id,
+            'username': target_user.username,
+            'display_name': target_user.display_name
+        }
+    }
+
+
+@app.route('/api/private-chats/<int:conversation_id>/messages', methods=['GET'])
+@login_required
+def private_chat_messages(conversation_id: int):
+    member = ConversationParticipant.query.filter_by(
+        conversation_id=conversation_id, user_id=current_user.id).first()
+    if not member:
+        return {'error': 'Conversation not found.'}, 404
+
+    strategy = request.args.get('strategy', 'newest').strip().lower()
+    if strategy not in ('oldest', 'newest'):
+        return {'error': 'Invalid strategy. Use oldest or newest.'}, 400
+
+    try:
+        limit = int(request.args.get('limit', 30))
+    except ValueError:
+        return {'error': 'limit must be an integer.'}, 400
+    limit = max(1, min(limit, 100))
+
+    before_id = request.args.get('before_id', type=int)
+    after_id = request.args.get('after_id', type=int)
+
+    query = db.session.query(Message, User.username, User.display_name).join(
+        User, User.id == Message.sender_id).filter(
+            Message.conversation_id == conversation_id)
+
+    if strategy == 'newest':
+        if before_id:
+            query = query.filter(Message.id < before_id)
+        query = query.order_by(Message.id.desc())
+    else:
+        if after_id:
+            query = query.filter(Message.id > after_id)
+        query = query.order_by(Message.id.asc())
+
+    rows = query.limit(limit + 1).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+
+    if strategy == 'newest':
+        rows.reverse()
+
+    partner = get_private_conversation_partner(conversation_id, current_user.id)
+    messages = []
+    for message, sender_username, sender_display_name in rows:
+        messages.append({
+            'id': message.id,
+            'conversation_id': conversation_id,
+            'sender_id': message.sender_id,
+            'sender_username': sender_username,
+            'sender_display_name': sender_display_name,
+            'body': message.body,
+            'message_type': message.message_type,
+            'sticker_file': message.sticker_file,
+            'created_at': message.created_at.isoformat()
+        })
+
+    next_cursor = None
+    if has_more and messages:
+        if strategy == 'newest':
+            next_cursor = {'before_id': messages[0]['id']}
+        else:
+            next_cursor = {'after_id': messages[-1]['id']}
+
+    return {
+        'conversation_id': conversation_id,
+        'strategy': strategy,
+        'messages': messages,
+        'has_more': has_more,
+        'next_cursor': next_cursor,
+        'partner': {
+            'id': partner.id,
+            'username': partner.username,
+            'display_name': partner.display_name
+        } if partner else None
     }
 
 
