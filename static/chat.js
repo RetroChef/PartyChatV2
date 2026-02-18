@@ -1,12 +1,15 @@
 let socket = io();
 let currentRoom = "General";
+let currentPrivateConversation = null;
 let username = document.getElementById("username").textContent;
+const isAuthenticated =
+        document.getElementById("username").dataset.authenticated === "true";
 let ownedRooms = new Set();
 let roomMessages = {};
 let replyContext = null;
 let roomPolicies = {};
 let canSendInCurrentRoom = true;
-
+const privateConversationTargets = {};
 
 const ROOM_MESSAGES_STORAGE_KEY = `partychat:roomMessages:${username}`;
 
@@ -26,6 +29,8 @@ socket.on("message", (data) => {
                         data.username,
                         data.file,
                         data.username === username ? "own" : "other",
+                        true,
+                        `room:${data.room || currentRoom}`,
                 );
                 return;
         }
@@ -35,26 +40,43 @@ socket.on("message", (data) => {
                 sender: data.username,
                 message: data.msg,
                 type: data.username === username ? "own" : "other",
+                threadType: "room",
                 replyTo: data.reply_to || null,
         });
 });
 
 socket.on("private_message", (data) => {
-        addMessage({
-                id: data.id,
-                sender: data.from,
-                message: `[Private] ${data.msg}`,
-                type: "private",
-                replyTo: data.reply_to || null,
-        });
+        const conversationKey = `private:${data.conversation_id}`;
+        privateConversationTargets[data.conversation_id] = {
+                username: data.from,
+                display_name: data.from,
+        };
+
+        addMessage(
+                {
+                        id: data.id,
+                        sender: data.from,
+                        message: data.msg,
+                        type: "private",
+                        threadType: "private",
+                        replyTo: data.reply_to || null,
+                },
+                true,
+                conversationKey,
+        );
 });
 
 socket.on("private_sticker", (data) => {
-        addStickerMessage(data.from, data.file, "private");
+        const conversationKey = `private:${data.conversation_id}`;
+        privateConversationTargets[data.conversation_id] = {
+                username: data.from,
+                display_name: data.from,
+        };
+        addStickerMessage(data.from, data.file, "private", true, conversationKey);
 });
 
 socket.on("status", (data) => {
-        addMessage({ sender: "System", message: data.msg, type: "system" });
+        addMessage({ sender: "System", message: data.msg, type: "system", threadType: "room" });
 });
 
 socket.on("room_state", (data) => {
@@ -101,12 +123,41 @@ socket.on("active_users", (data) => {
                 .join("");
 });
 
-function storeRoomMessage(messageData) {
-        if (!roomMessages[currentRoom]) {
-                roomMessages[currentRoom] = [];
+
+function getConversationStorageKey() {
+        if (currentPrivateConversation) {
+                return `private:${currentPrivateConversation.id}`;
+        }
+        return `room:${currentRoom}`;
+}
+
+function getPrivateConversationLabel() {
+        if (!currentPrivateConversation) {
+                return "";
         }
 
-        roomMessages[currentRoom].push(messageData);
+        return (
+                currentPrivateConversation.display_name ||
+                currentPrivateConversation.username ||
+                "private chat"
+        );
+}
+
+function setChatScope() {
+        const chat = document.getElementById("chat");
+        if (!chat) {
+                return;
+        }
+
+        chat.classList.toggle("private-thread", Boolean(currentPrivateConversation));
+}
+
+function storeRoomMessage(messageData, conversationKey = getConversationStorageKey()) {
+        if (!roomMessages[conversationKey]) {
+                roomMessages[conversationKey] = [];
+        }
+
+        roomMessages[conversationKey].push(messageData);
         persistRoomMessages();
 }
 
@@ -171,14 +222,21 @@ function buildReplyBlock(replyTo) {
         return replyDiv;
 }
 
-function addMessage(messageData, shouldStore = true) {
+function addMessage(messageData, shouldStore = true, conversationKey = getConversationStorageKey()) {
         if (shouldStore) {
-                storeRoomMessage(messageData);
+                storeRoomMessage(messageData, conversationKey);
+        }
+
+        if (conversationKey !== getConversationStorageKey()) {
+                return;
         }
 
         const chat = document.getElementById("chat");
         const messageDiv = document.createElement("div");
         messageDiv.className = `message ${messageData.type}`;
+        if (messageData.threadType === "private") {
+                messageDiv.classList.add("thread-private");
+        }
         const msgId =
                 messageData.id ||
                 `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -193,10 +251,11 @@ function addMessage(messageData, shouldStore = true) {
 
         const textDiv = document.createElement("div");
         textDiv.className = "message-text";
-        textDiv.textContent = `${messageData.sender}: ${messageData.message}`;
+        const prefix = messageData.threadType === "private" ? "[Private] " : "";
+        textDiv.textContent = `${prefix}${messageData.sender}: ${messageData.message}`;
         messageDiv.appendChild(textDiv);
 
-        if (messageData.type === "own" || messageData.type === "other") {
+        if (messageData.type === "own" || messageData.type === "other" || messageData.type === "private") {
                 bindSwipeReply(messageDiv, {
                         id: msgId,
                         sender: messageData.sender,
@@ -209,13 +268,23 @@ function addMessage(messageData, shouldStore = true) {
         chat.scrollTop = chat.scrollHeight;
 }
 
-function addStickerMessage(sender, file, type = "other", shouldStore = true) {
+function addStickerMessage(sender, file, type = "other", shouldStore = true, conversationKey = getConversationStorageKey()) {
         if (shouldStore) {
-                storeRoomMessage({
-                        sender,
-                        message: file,
-                        type: `sticker:${type}`,
-                });
+                const isPrivateThread =
+                        conversationKey.startsWith("private:") || type === "private";
+                storeRoomMessage(
+                        {
+                                sender,
+                                message: file,
+                                type: `sticker:${type}`,
+                                threadType: isPrivateThread ? "private" : "room",
+                        },
+                        conversationKey,
+                );
+        }
+
+        if (conversationKey !== getConversationStorageKey()) {
+                return;
         }
 
         const chat = document.getElementById("chat");
@@ -224,6 +293,9 @@ function addStickerMessage(sender, file, type = "other", shouldStore = true) {
         const image = document.createElement("img");
 
         messageDiv.className = `message sticker ${type}`;
+        if (conversationKey.startsWith("private:")) {
+                messageDiv.classList.add("thread-private");
+        }
         senderDiv.className = "sticker-sender";
         senderDiv.textContent = `${sender}:`;
         image.src = `/static/${file}`;
@@ -338,17 +410,39 @@ function sendMessage() {
 
         if (!message) return;
 
-        if (message.startsWith("@")) {
+        if (currentPrivateConversation) {
+                const target = currentPrivateConversation.username;
+                addMessage({
+                        sender: username,
+                        message,
+                        type: "own",
+                        threadType: "private",
+                        replyTo: replyContext,
+                });
+
+                socket.emit("message", {
+                        msg: message,
+                        type: "private",
+                        target,
+                        reply_to: replyContext,
+                });
+        } else if (message.startsWith("@")) {
                 const [target, ...msgParts] = message.substring(1).split(" ");
                 const privateMsg = msgParts.join(" ");
 
                 if (privateMsg) {
-                        addMessage({
-                                sender: username,
-                                message: `[Private to ${target}] ${privateMsg}`,
-                                type: "own",
-                                replyTo: replyContext,
-                        });
+                        const conversationKey = `private:direct:${target}`;
+                        addMessage(
+                                {
+                                        sender: username,
+                                        message: privateMsg,
+                                        type: "own",
+                                        threadType: "private",
+                                        replyTo: replyContext,
+                                },
+                                true,
+                                conversationKey,
+                        );
 
                         socket.emit("message", {
                                 msg: privateMsg,
@@ -383,8 +477,10 @@ function getPrivateTargetFromInput() {
 }
 
 function sendSticker(file) {
-        const privateTarget = getPrivateTargetFromInput();
-        
+        const privateTarget = currentPrivateConversation
+                ? currentPrivateConversation.username
+                : getPrivateTargetFromInput();
+
         if (!privateTarget && !canSendInCurrentRoom) {
                 showRoomFeedback(
                         "This room only allows messages from the host and moderators.",
@@ -518,6 +614,118 @@ function toggleRoomAccess() {
         }
 }
 
+async function loadPrivateConversationHistory(conversationId) {
+        const response = await fetch(
+                `/api/private-chats/${conversationId}/messages?strategy=newest&limit=50`,
+        );
+        const payload = await response.json();
+        if (!response.ok) {
+                throw new Error(payload.error || "Unable to load conversation history.");
+        }
+
+        const key = `private:${conversationId}`;
+        privateConversationTargets[conversationId] = payload.partner || {};
+        roomMessages[key] = payload.messages.map((msg) => {
+                if (msg.message_type === "private_sticker") {
+                        return {
+                                id: String(msg.id),
+                                sender: msg.sender_username,
+                                message: msg.sticker_file,
+                                type: `sticker:${msg.sender_username === username ? "own" : "private"}`,
+                                threadType: "private",
+                        };
+                }
+
+                return {
+                        id: String(msg.id),
+                        sender: msg.sender_username,
+                        message: msg.body || "",
+                        type: msg.sender_username === username ? "own" : "private",
+                        threadType: "private",
+                };
+        });
+        persistRoomMessages();
+}
+
+async function openPrivateConversation(conversationId, target) {
+        currentPrivateConversation = {
+                id: conversationId,
+                username: target.username,
+                display_name: target.display_name,
+        };
+        setChatScope();
+        updateComposerAccess();
+        highlightActiveRoom(null);
+        clearReply();
+
+        try {
+                await loadPrivateConversationHistory(conversationId);
+                renderConversationMessages(getConversationStorageKey());
+                showRoomFeedback(`Private chat with ${getPrivateConversationLabel()}`);
+        } catch (error) {
+                showRoomFeedback(error.message, true);
+        }
+}
+
+async function startPrivateChat() {
+        if (!isAuthenticated) {
+                showRoomFeedback("Sign in to start private chats.", true);
+                return;
+        }
+
+        const search = window.prompt("Search users (optional):", "") || "";
+        const query = search.trim() ? `?q=${encodeURIComponent(search.trim())}` : "";
+
+        try {
+                const usersResponse = await fetch(`/api/users${query}`);
+                const usersPayload = await usersResponse.json();
+                if (!usersResponse.ok) {
+                        showRoomFeedback(usersPayload.error || "Unable to load users.", true);
+                        return;
+                }
+
+                if (!usersPayload.users || usersPayload.users.length === 0) {
+                        showRoomFeedback("No users found for private chat.", true);
+                        return;
+                }
+
+                const options = usersPayload.users
+                        .map(
+                                (user, index) =>
+                                        `${index + 1}. ${user.display_name || user.username} (@${user.username})`,
+                        )
+                        .join("\n");
+                const picked = window.prompt(
+                        `Choose a user by number:
+${options}`,
+                        "1",
+                );
+                const idx = Number.parseInt(String(picked || ""), 10) - 1;
+                if (!Number.isInteger(idx) || idx < 0 || idx >= usersPayload.users.length) {
+                        showRoomFeedback("Private chat canceled.", true);
+                        return;
+                }
+
+                const target = usersPayload.users[idx];
+                const startResponse = await fetch("/api/private-chats/start", {
+                        method: "POST",
+                        headers: {
+                                "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({ target_id: target.id }),
+                });
+                const startPayload = await startResponse.json();
+                if (!startResponse.ok) {
+                        showRoomFeedback(startPayload.error || "Unable to start private chat.", true);
+                        return;
+                }
+
+                await openPrivateConversation(startPayload.conversation_id, startPayload.target);
+        } catch (_error) {
+                showRoomFeedback("Unable to start private chat.", true);
+        }
+}
+
 async function joinRoomByCode() {
         const roomCodeInput = document.getElementById("room-code-input");
         const roomCode = roomCodeInput.value.trim().toUpperCase();
@@ -566,7 +774,39 @@ function toggleStickerBar() {
         stickerBar.classList.toggle("collapsed");
 }
 
+function renderConversationMessages(conversationKey) {
+        const chat = document.getElementById("chat");
+        chat.innerHTML = "";
+        messageElementsById.clear();
+
+        if (!roomMessages[conversationKey]) {
+                return;
+        }
+
+        roomMessages[conversationKey].forEach((msg) => {
+                if (
+                        typeof msg.type === "string" &&
+                        msg.type.startsWith("sticker:")
+                ) {
+                        addStickerMessage(
+                                msg.sender,
+                                msg.message,
+                                msg.type.replace("sticker:", ""),
+                                false,
+                                conversationKey,
+                        );
+                } else {
+                        addMessage(msg, false, conversationKey);
+                }
+        });
+}
+
 function joinRoom(room) {
+        if (currentPrivateConversation) {
+                currentPrivateConversation = null;
+        }
+        setChatScope();
+
         socket.emit("leave", { room: currentRoom });
         currentRoom = room;
         canSendInCurrentRoom = true;
@@ -575,28 +815,7 @@ function joinRoom(room) {
 
         highlightActiveRoom(room);
         clearReply();
-
-        const chat = document.getElementById("chat");
-        chat.innerHTML = "";
-        messageElementsById.clear();
-
-        if (roomMessages[room]) {
-                roomMessages[room].forEach((msg) => {
-                        if (
-                                typeof msg.type === "string" &&
-                                msg.type.startsWith("sticker:")
-                        ) {
-                                addStickerMessage(
-                                        msg.sender,
-                                        msg.message,
-                                        msg.type.replace("sticker:", ""),
-                                        false,
-                                );
-                        } else {
-                                addMessage(msg, false);
-                        }
-                });
-        }
+        renderConversationMessages(getConversationStorageKey());
 }
 
 function updateComposerAccess() {
@@ -608,12 +827,15 @@ function updateComposerAccess() {
                 return;
         }
 
-        messageInput.disabled = !canSendInCurrentRoom;
-        sendButton.disabled = !canSendInCurrentRoom;
-        stickerButton.disabled = !canSendInCurrentRoom;
-        messageInput.placeholder = canSendInCurrentRoom
-                ? "Type a message..."
-                : "Only the room host and moderators can send messages";
+        const canSend = currentPrivateConversation ? true : canSendInCurrentRoom;
+        messageInput.disabled = !canSend;
+        sendButton.disabled = !canSend;
+        stickerButton.disabled = !canSend;
+        messageInput.placeholder = currentPrivateConversation
+                ? `Message ${getPrivateConversationLabel()}...`
+                : canSend
+                  ? "Type a message..."
+                  : "Only the room host and moderators can send messages";
 }
 
 function insertPrivateMessage(user) {

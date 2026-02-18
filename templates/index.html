@@ -11,7 +11,7 @@
 		/>
 	</head>
 	<body>
-		<h2>Welcome, <span id="username">{{ username }}</span>!</h2>
+		<h2>Welcome, <span id="username" data-authenticated="{{ "true" if current_user.is_authenticated else "false" }}">{{ username }}</span>!</h2>
 		<div class="top-bar">
 			<div class="auth-actions">
 				{% if current_user.is_authenticated %}
@@ -48,6 +48,14 @@
 						onclick="toggleRoomAccess()"
 					>
 						<span class="plus-icon">+</span> Create/Join a Room
+					</button>
+					<button
+						id="new-private-chat"
+						class="room-access-btn"
+						type="button"
+						onclick="startPrivateChat()"
+					>
+						New private chat
 					</button>
 					<div id="room-access-panel" class="room-access-panel hidden">
 						<div class="room-join-row">
