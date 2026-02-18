@@ -11,8 +11,8 @@ from flask import Flask, render_template, request, session, redirect, url_for, f
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_login import LoginManager, login_user, current_user, logout_user, login_required
 from werkzeug.middleware.proxy_fix import ProxyFix
-from sqlalchemy import inspect, text
-from models import db, User
+from sqlalchemy import inspect, text, func, distinct
+from models import db, User, Conversation, ConversationParticipant, Message
 
 app = Flask(__name__)
 
@@ -289,6 +289,56 @@ def get_owned_rooms(username: str) -> List[str]:
         room_name for room_name, meta in room_directory.items()
         if meta.get('created_by') == username
     ]
+    
+def get_user_by_username(username: str) -> User | None:
+    if not username:
+        return None
+    return User.query.filter_by(username=username).first()
+
+
+def get_or_create_direct_conversation(sender_id: int,
+                                      recipient_id: int) -> Conversation:
+    participant_ids = sorted([sender_id, recipient_id])
+
+    candidate_conversation_ids = [
+        conversation_id for conversation_id, in db.session.query(
+            ConversationParticipant.conversation_id).filter(
+                ConversationParticipant.user_id.in_(participant_ids)).group_by(
+                    ConversationParticipant.conversation_id).having(
+                        func.count(distinct(
+                            ConversationParticipant.user_id)) == 2).all()
+    ]
+
+    for conversation_id in candidate_conversation_ids:
+        participant_count = ConversationParticipant.query.filter_by(
+            conversation_id=conversation_id).count()
+        if participant_count == 2:
+            conversation = Conversation.query.get(conversation_id)
+            if conversation:
+                return conversation
+
+    conversation = Conversation(conversation_metadata={
+        'type': 'direct',
+        'participants': participant_ids
+    })
+    db.session.add(conversation)
+    db.session.flush()
+
+    db.session.add_all([
+        ConversationParticipant(conversation_id=conversation.id,
+                                user_id=sender_id),
+        ConversationParticipant(conversation_id=conversation.id,
+                                user_id=recipient_id)
+    ])
+    db.session.flush()
+    return conversation
+
+
+def find_active_user_sid(username: str) -> str | None:
+    for sid, user_data in active_users.items():
+        if user_data.get('username') == username:
+            return sid
+    return None
 
 def get_room_message_policy(room_name: str) -> str:
     return room_directory.get(room_name, {}).get('message_policy', 'everyone')
@@ -733,32 +783,79 @@ def handle_message(data: dict):
                 logger.warning('Private sticker missing target or file')
                 return
 
-            for sid, user_data in active_users.items():
-                if user_data['username'] == target_user:
-                    emit('private_sticker', {
-                        'id': str(uuid.uuid4()),
-                        'from': username,
-                        'to': target_user,
-                        'file': file,
-                        'timestamp': timestamp
-                    },
-                         room=sid)
-                    logger.info(
-                        f"Private sticker sent: {username} -> {target_user}")
-                    return
+            sender_user = get_user_by_username(username)
+            recipient_user = get_user_by_username(target_user)
+            if not sender_user or not recipient_user:
+                logger.warning(
+                    'Private sticker failed - sender or recipient not found: %s -> %s',
+                    username, target_user)
+                emit('message_error', {
+                    'error': 'Unable to resolve sender/recipient users.'
+                },
+                     room=request.sid)
+                return
 
-            logger.warning(
-                f"Private sticker failed - user not found: {target_user}")
+            conversation = get_or_create_direct_conversation(sender_user.id,
+                                                             recipient_user.id)
+
+            message_row = Message(conversation_id=conversation.id,
+                                  sender_id=sender_user.id,
+                                  recipient_id=recipient_user.id,
+                                  message_type='private_sticker',
+                                  sticker_file=file)
+            db.session.add(message_row)
+            db.session.commit()
+
+            recipient_sid = find_active_user_sid(target_user)
+            if recipient_sid:
+                emit('private_sticker', {
+                    'id': str(message_row.id),
+                    'conversation_id': conversation.id,
+                    'from': username,
+                    'to': target_user,
+                    'file': file,
+                    'timestamp': message_row.created_at.isoformat()
+                },
+                     room=recipient_sid)
+                message_row.delivered_at = datetime.utcnow()
+                db.session.commit()
+                logger.info(f"Private sticker sent: {username} -> {target_user}")
+            else:
+                logger.info(
+                    f"Private sticker queued (recipient offline): {username} -> {target_user}"
+                )
             return
 
         if not message:
             return
 
         if msg_type == 'private':
-            # Handle private messages
             target_user = data.get('target')
             if not target_user:
                 return
+            sender_user = get_user_by_username(username)
+            recipient_user = get_user_by_username(target_user)
+            if not sender_user or not recipient_user:
+                logger.warning(
+                    'Private message failed - sender or recipient not found: %s -> %s',
+                    username, target_user)
+                emit('message_error', {
+                    'error': 'Unable to resolve sender/recipient users.'
+                },
+                     room=request.sid)
+                return
+
+            conversation = get_or_create_direct_conversation(sender_user.id,
+                                                             recipient_user.id)
+
+            message_row = Message(conversation_id=conversation.id,
+                                  sender_id=sender_user.id,
+                                  recipient_id=recipient_user.id,
+                                  body=message,
+                                  message_type='private')
+            db.session.add(message_row)
+            db.session.commit()
+
 
             reply_payload = None
             if isinstance(reply_to, dict):
@@ -768,23 +865,25 @@ def handle_message(data: dict):
                     'msg': reply_to.get('msg')
                 }
 
-            for sid, user_data in active_users.items():
-                if user_data['username'] == target_user:
-                    emit('private_message', {
-                        'id': str(uuid.uuid4()),
-                        'msg': message,
-                        'from': username,
-                        'to': target_user,
-                        'timestamp': timestamp,
-                        'reply_to': reply_payload
-                    },
-                         room=sid)
-                    logger.info(
-                        f"Private message sent: {username} -> {target_user}")
-                    return
-
-            logger.warning(
-                f"Private message failed - user not found: {target_user}")
+            recipient_sid = find_active_user_sid(target_user)
+            if recipient_sid:
+                emit('private_message', {
+                    'id': str(message_row.id),
+                    'conversation_id': conversation.id,
+                    'msg': message,
+                    'from': username,
+                    'to': target_user,
+                    'timestamp': message_row.created_at.isoformat(),
+                    'reply_to': reply_payload
+                },
+                     room=recipient_sid)
+                message_row.delivered_at = datetime.utcnow()
+                db.session.commit()
+                logger.info(f"Private message sent: {username} -> {target_user}")
+            else:
+                logger.info(
+                    f"Private message queued (recipient offline): {username} -> {target_user}"
+                )
 
         else:
             # Regular room message
