@@ -541,11 +541,16 @@ def index():
             session['username'] = generate_guest_username()
         username = session['username']
 
+    vite_dev_server = os.environ.get('VITE_DEV_SERVER', '').rstrip('/')
+    use_vite_dev = bool(vite_dev_server)
+
     return render_template('index.html',
                            username=username,
                            rooms=get_rooms_for_sidebar(),
                            owned_rooms=get_owned_rooms(username),
-                           stickers=get_available_stickers())
+                           stickers=get_available_stickers(),
+                           use_vite_dev=use_vite_dev,
+                           vite_dev_server=vite_dev_server)
 
 
 @app.route('/create-room')
