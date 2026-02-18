@@ -11,7 +11,7 @@ from flask import Flask, render_template, request, session, redirect, url_for, f
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_login import LoginManager, login_user, current_user, logout_user, login_required
 from werkzeug.middleware.proxy_fix import ProxyFix
-
+from sqlalchemy import inspect, text
 from models import db, User
 
 app = Flask(__name__)
@@ -41,10 +41,36 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 # Extension
 
 db.init_app(app)
+def ensure_user_profile_columns() -> None:
+    inspector = inspect(db.engine)
+    table_names = set(inspector.get_table_names())
+    if 'user' not in table_names:
+        return
+
+    existing_columns = {column['name'] for column in inspector.get_columns('user')}
+    column_statements = {
+        'display_name': 'ALTER TABLE user ADD COLUMN display_name VARCHAR(80)',
+        'bio': 'ALTER TABLE user ADD COLUMN bio VARCHAR(500)',
+        'avatar_url': 'ALTER TABLE user ADD COLUMN avatar_url VARCHAR(255)',
+        'is_profile_complete': 'ALTER TABLE user ADD COLUMN is_profile_complete BOOLEAN NOT NULL DEFAULT 0'
+    }
+
+    missing_statements = [
+        statement for column_name, statement in column_statements.items()
+        if column_name not in existing_columns
+    ]
+
+    if not missing_statements:
+        return
+
+    with db.engine.begin() as conn:
+        for statement in missing_statements:
+            conn.execute(text(statement))
 
 with app.app_context():
     db.create_all()
-
+    ensure_user_profile_columns()
+    
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
@@ -297,6 +323,37 @@ def emit_room_state(room_name: str, username: str) -> None:
 for default_room in app.config['CHAT_ROOMS']:
     add_room(default_room, is_public=True)
 
+CHAT_PROTECTED_ENDPOINTS = {
+    'index',
+    'create_room_page',
+    'create_room',
+    'delete_room',
+    'join_room_by_code'
+}
+
+
+@app.before_request
+def enforce_profile_completion():
+    if not current_user.is_authenticated:
+        return None
+
+    if current_user.is_profile_complete:
+        return None
+
+    if request.endpoint is None:
+        return None
+
+    if request.endpoint == 'static':
+        return None
+
+    allowed_endpoints = {'onboarding', 'logout', 'login', 'register'}
+    if request.endpoint in allowed_endpoints:
+        return None
+
+    if request.endpoint in CHAT_PROTECTED_ENDPOINTS:
+        return redirect(url_for('onboarding'))
+
+    return None
 
 def generate_guest_username() -> str:
     """Generate a unique guest username with timestamp to avoid collisions"""
@@ -453,8 +510,8 @@ def register():
         db.session.commit()
 
         login_user(user)
-        flash('Account created successfully!', 'success')
-        return redirect(url_for('index'))
+        flash('Account created successfully! Please complete your profile.', 'success')
+        return redirect(url_for('onboarding'))
 
     # GET request
     return render_template('register.html')
@@ -476,6 +533,37 @@ def login():
 
     return render_template('login.html')
 
+
+@app.route('/onboarding', methods=['GET', 'POST'])
+@login_required
+def onboarding():
+    if request.method == 'POST':
+        display_name = request.form.get('display_name', '').strip()
+        bio = request.form.get('bio', '').strip()
+        avatar_url = request.form.get('avatar_url', '').strip()
+
+        if not (2 <= len(display_name) <= 80):
+            flash('Display name must be between 2 and 80 characters.', 'danger')
+            return redirect(url_for('onboarding'))
+
+        if len(bio) > 500:
+            flash('Bio must be 500 characters or fewer.', 'danger')
+            return redirect(url_for('onboarding'))
+
+        if avatar_url and not re.match(r'^https?://[^\s]+$', avatar_url):
+            flash('Avatar URL must be a valid http(s) URL.', 'danger')
+            return redirect(url_for('onboarding'))
+
+        current_user.display_name = display_name
+        current_user.bio = bio
+        current_user.avatar_url = avatar_url
+        current_user.is_profile_complete = True
+        db.session.commit()
+
+        flash('Profile completed successfully!', 'success')
+        return redirect(url_for('index'))
+
+    return render_template('onboarding.html')
 
 @app.route('/logout')
 def logout():

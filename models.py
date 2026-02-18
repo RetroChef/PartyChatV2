@@ -11,7 +11,11 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
+    display_name = db.Column(db.String(80), nullable=True)
+    bio = db.Column(db.String(500), nullable=True)
+    avatar_url = db.Column(db.String(255), nullable=True)
+    is_profile_complete = db.Column(db.Boolean, default=False, nullable=False)
+    
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
 
