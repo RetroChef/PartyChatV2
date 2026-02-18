@@ -278,12 +278,13 @@ function normalizeDmThread(thread) {
                 thread.display_name ||
                 thread.partner_display_name ||
                 usernameValue ||
-                "Unknown";
+                "Direct chat";
+        const previewText = truncateText(thread.preview || "");
         return {
                 conversation_id: conversationId,
                 username: usernameValue,
                 display_name: displayName,
-                preview: truncateText(thread.preview || ""),
+                preview: previewText,
                 updated_at: thread.updated_at || new Date().toISOString(),
                 unread_count: Number(thread.unread_count || 0),
         };
@@ -296,7 +297,13 @@ function upsertDmThread(thread) {
         }
 
         const existing = dmThreadsByConversationId.get(normalized.conversation_id) || {};
-        const merged = { ...existing, ...normalized };
+        const merged = {
+                ...existing,
+                ...normalized,
+                username: normalized.username || existing.username || "",
+                display_name: normalized.display_name || existing.display_name || "Direct chat",
+                preview: normalized.preview || existing.preview || "",
+        };
         dmThreadsByConversationId.set(normalized.conversation_id, merged);
 
         if (merged.username || merged.display_name) {
@@ -333,11 +340,11 @@ function renderDmChatList() {
 
                 const name = document.createElement("span");
                 name.className = "dm-chat-item-name";
-                name.textContent = thread.display_name || thread.username || "Unknown";
+                name.textContent = thread.display_name || thread.username || "Direct chat";
 
                 const preview = document.createElement("span");
                 preview.className = "dm-chat-item-preview";
-                preview.textContent = thread.preview || "Open chat";
+                preview.textContent = thread.preview || "No messages yet";
 
                 item.appendChild(name);
                 item.appendChild(preview);
