@@ -91,6 +91,7 @@ def load_user(user_id):
 # In-memory storage for active users
 # In production, consider using Redis or another distributed storage
 active_users: Dict[str, dict] = {}
+user_presence: Dict[int, str] = {}
 room_directory: Dict[str, dict] = {}
 room_code_index: Dict[str, str] = {}
 MESSAGE_POLICIES = {'everyone', 'host_mods_only'}
@@ -359,6 +360,104 @@ def find_active_user_sid(username: str) -> str | None:
         if user_data.get('username') == username:
             return sid
     return None
+
+
+def get_message_status(message: Message) -> str:
+    if message.read_at:
+        return 'read'
+    if message.delivered_at:
+        return 'delivered'
+    return 'sent'
+
+
+def serialize_private_message(message: Message, sender: User,
+                              recipient: User) -> dict:
+    return {
+        'id': str(message.id),
+        'conversation_id': message.conversation_id,
+        'msg': message.body,
+        'from': sender.username,
+        'to': recipient.username,
+        'message_type': message.message_type,
+        'file': message.sticker_file,
+        'timestamp': message.created_at.isoformat(),
+        'delivered_at': message.delivered_at.isoformat()
+        if message.delivered_at else None,
+        'read_at': message.read_at.isoformat() if message.read_at else None,
+        'status': get_message_status(message)
+    }
+
+
+def emit_missed_private_messages(user: User) -> None:
+    pending_messages = Message.query.filter(
+        Message.recipient_id == user.id, Message.delivered_at.is_(None)).order_by(
+            Message.created_at.asc()).all()
+
+    if not pending_messages:
+        return
+
+    sender_ids = {message.sender_id for message in pending_messages}
+    sender_lookup = {
+        sender.id: sender
+        for sender in User.query.filter(User.id.in_(sender_ids)).all()
+    }
+
+    batch = []
+    for message in pending_messages:
+        sender = sender_lookup.get(message.sender_id)
+        if not sender:
+            continue
+        batch.append(serialize_private_message(message, sender, user))
+
+    if not batch:
+        return
+
+    emit('private_message_batch', {'messages': batch}, room=request.sid)
+    delivered_at = datetime.utcnow()
+    for message in pending_messages:
+        message.delivered_at = delivered_at
+    db.session.commit()
+
+
+def mark_conversation_as_read(reader: User, conversation_id: int) -> dict | None:
+    participant = ConversationParticipant.query.filter_by(
+        conversation_id=conversation_id, user_id=reader.id).first()
+    if not participant:
+        return None
+
+    unread_messages = Message.query.filter(
+        Message.conversation_id == conversation_id,
+        Message.recipient_id == reader.id,
+        Message.read_at.is_(None)).all()
+
+    if not unread_messages:
+        return {'updated': 0, 'read_at': None, 'message_ids': []}
+
+    now = datetime.utcnow()
+    sender_ids: set[int] = set()
+    message_ids: list[int] = []
+    for message in unread_messages:
+        if not message.delivered_at:
+            message.delivered_at = now
+        message.read_at = now
+        sender_ids.add(message.sender_id)
+        message_ids.append(message.id)
+
+    db.session.commit()
+
+    receipt_payload = {
+        'conversation_id': conversation_id,
+        'reader_id': reader.id,
+        'reader_username': reader.username,
+        'message_ids': message_ids,
+        'read_at': now.isoformat()
+    }
+    for sender_id in sender_ids:
+        sender_sid = user_presence.get(sender_id)
+        if sender_sid:
+            emit('private_messages_read', receipt_payload, room=sender_sid)
+
+    return {'updated': len(message_ids), 'read_at': now.isoformat(), 'message_ids': message_ids}
 
 def get_room_message_policy(room_name: str) -> str:
     return room_directory.get(room_name, {}).get('message_policy', 'everyone')
@@ -651,7 +750,10 @@ def private_chat_messages(conversation_id: int):
             'body': message.body,
             'message_type': message.message_type,
             'sticker_file': message.sticker_file,
-            'created_at': message.created_at.isoformat()
+            'created_at': message.created_at.isoformat(),
+            'delivered_at': message.delivered_at.isoformat() if message.delivered_at else None,
+            'read_at': message.read_at.isoformat() if message.read_at else None,
+            'status': get_message_status(message)
         })
 
     next_cursor = None
@@ -672,6 +774,21 @@ def private_chat_messages(conversation_id: int):
             'username': partner.username,
             'display_name': partner.display_name
         } if partner else None
+    }
+
+
+@app.route('/api/private-chats/<int:conversation_id>/read', methods=['POST'])
+@login_required
+def mark_private_chat_read(conversation_id: int):
+    result = mark_conversation_as_read(current_user, conversation_id)
+    if result is None:
+        return {'error': 'Conversation not found.'}, 404
+
+    return {
+        'conversation_id': conversation_id,
+        'updated': result['updated'],
+        'read_at': result['read_at'],
+        'message_ids': result['message_ids']
     }
 
 
@@ -792,6 +909,10 @@ def connect():
             'connected_at': datetime.now().isoformat()
         }
 
+        if current_user.is_authenticated:
+            user_presence[current_user.id] = request.sid
+            emit_missed_private_messages(current_user)
+
         emit('active_users',
              {'users': [user['username'] for user in active_users.values()]},
              broadcast=True)
@@ -809,6 +930,12 @@ def disconnect():
         if request.sid in active_users:
             username = active_users[request.sid]['username']
             del active_users[request.sid]
+
+            stale_user_ids = [
+                user_id for user_id, sid in user_presence.items() if sid == request.sid
+            ]
+            for user_id in stale_user_ids:
+                user_presence.pop(user_id, None)
 
             emit('active_users', {
                 'users': [user['username'] for user in active_users.values()]
@@ -958,17 +1085,21 @@ def handle_message(data: dict):
 
             recipient_sid = find_active_user_sid(target_user)
             if recipient_sid:
+                delivered_at = datetime.utcnow()
+                message_row.delivered_at = delivered_at
+                db.session.commit()
                 emit('private_sticker', {
                     'id': str(message_row.id),
                     'conversation_id': conversation.id,
                     'from': username,
                     'to': target_user,
                     'file': file,
-                    'timestamp': message_row.created_at.isoformat()
+                    'timestamp': message_row.created_at.isoformat(),
+                    'delivered_at': delivered_at.isoformat(),
+                    'read_at': None,
+                    'status': 'delivered'
                 },
                      room=recipient_sid)
-                message_row.delivered_at = datetime.utcnow()
-                db.session.commit()
                 logger.info(f"Private sticker sent: {username} -> {target_user}")
             else:
                 logger.info(
@@ -1017,6 +1148,9 @@ def handle_message(data: dict):
 
             recipient_sid = find_active_user_sid(target_user)
             if recipient_sid:
+                delivered_at = datetime.utcnow()
+                message_row.delivered_at = delivered_at
+                db.session.commit()
                 emit('private_message', {
                     'id': str(message_row.id),
                     'conversation_id': conversation.id,
@@ -1024,11 +1158,12 @@ def handle_message(data: dict):
                     'from': username,
                     'to': target_user,
                     'timestamp': message_row.created_at.isoformat(),
+                    'delivered_at': delivered_at.isoformat(),
+                    'read_at': None,
+                    'status': 'delivered',
                     'reply_to': reply_payload
                 },
                      room=recipient_sid)
-                message_row.delivered_at = datetime.utcnow()
-                db.session.commit()
                 logger.info(f"Private message sent: {username} -> {target_user}")
             else:
                 logger.info(
@@ -1078,6 +1213,32 @@ def handle_message(data: dict):
 
     except Exception as e:
         logger.error(f"Message handling error: {str(e)}")
+
+
+@socketio.on('mark_private_read')
+def on_mark_private_read(data: dict):
+    if not current_user.is_authenticated:
+        emit('message_error', {'error': 'Authentication required.'}, room=request.sid)
+        return
+
+    conversation_id = data.get('conversation_id')
+    try:
+        normalized_conversation_id = int(conversation_id)
+    except (TypeError, ValueError):
+        emit('message_error', {'error': 'Invalid conversation id.'}, room=request.sid)
+        return
+
+    result = mark_conversation_as_read(current_user, normalized_conversation_id)
+    if result is None:
+        emit('message_error', {'error': 'Conversation not found.'}, room=request.sid)
+        return
+
+    emit('mark_private_read_ack', {
+        'conversation_id': normalized_conversation_id,
+        'updated': result['updated'],
+        'read_at': result['read_at'],
+        'message_ids': result['message_ids']
+    }, room=request.sid)
 
 
 if __name__ == '__main__':

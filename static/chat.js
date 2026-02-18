@@ -45,6 +45,21 @@ socket.on("message", (data) => {
         });
 });
 
+
+function normalizeIncomingPrivateMessage(data) {
+        const sender = data.from || "unknown";
+        return {
+                id: String(data.id),
+                sender,
+                message: data.msg || "",
+                type: sender === username ? "own" : "private",
+                threadType: "private",
+                status: data.status || "sent",
+                delivered_at: data.delivered_at || null,
+                read_at: data.read_at || null,
+        };
+}
+
 socket.on("private_message", (data) => {
         const conversationKey = `private:${data.conversation_id}`;
         privateConversationTargets[data.conversation_id] = {
@@ -54,11 +69,7 @@ socket.on("private_message", (data) => {
 
         addMessage(
                 {
-                        id: data.id,
-                        sender: data.from,
-                        message: data.msg,
-                        type: "private",
-                        threadType: "private",
+                        ...normalizeIncomingPrivateMessage(data),
                         replyTo: data.reply_to || null,
                 },
                 true,
@@ -73,6 +84,25 @@ socket.on("private_sticker", (data) => {
                 display_name: data.from,
         };
         addStickerMessage(data.from, data.file, "private", true, conversationKey);
+});
+
+
+socket.on("private_message_batch", (data) => {
+        const messages = Array.isArray(data?.messages) ? data.messages : [];
+        messages.forEach((msg) => {
+                const conversationKey = `private:${msg.conversation_id}`;
+                privateConversationTargets[msg.conversation_id] = {
+                        username: msg.from,
+                        display_name: msg.from,
+                };
+
+                if (msg.message_type === "private_sticker") {
+                        addStickerMessage(msg.from, msg.file, "private", true, conversationKey);
+                        return;
+                }
+
+                addMessage(normalizeIncomingPrivateMessage(msg), true, conversationKey);
+        });
 });
 
 socket.on("status", (data) => {
@@ -633,6 +663,9 @@ async function loadPrivateConversationHistory(conversationId) {
                                 message: msg.sticker_file,
                                 type: `sticker:${msg.sender_username === username ? "own" : "private"}`,
                                 threadType: "private",
+                                status: msg.status || "sent",
+                                delivered_at: msg.delivered_at,
+                                read_at: msg.read_at,
                         };
                 }
 
@@ -642,9 +675,24 @@ async function loadPrivateConversationHistory(conversationId) {
                         message: msg.body || "",
                         type: msg.sender_username === username ? "own" : "private",
                         threadType: "private",
+                        status: msg.status || "sent",
+                        delivered_at: msg.delivered_at,
+                        read_at: msg.read_at,
                 };
         });
         persistRoomMessages();
+}
+
+
+async function markConversationRead(conversationId) {
+        try {
+                await fetch(`/api/private-chats/${conversationId}/read`, {
+                        method: "POST",
+                });
+                socket.emit("mark_private_read", { conversation_id: conversationId });
+        } catch (_error) {
+                // best effort only
+        }
 }
 
 async function openPrivateConversation(conversationId, target) {
@@ -661,6 +709,7 @@ async function openPrivateConversation(conversationId, target) {
         try {
                 await loadPrivateConversationHistory(conversationId);
                 renderConversationMessages(getConversationStorageKey());
+                await markConversationRead(conversationId);
                 showRoomFeedback(`Private chat with ${getPrivateConversationLabel()}`);
         } catch (error) {
                 showRoomFeedback(error.message, true);
