@@ -697,6 +697,64 @@ def start_private_chat():
     }
 
 
+@app.route('/api/private-chats', methods=['GET'])
+@login_required
+def list_private_chats():
+    participant_rows = db.session.query(ConversationParticipant.conversation_id).filter(
+        ConversationParticipant.user_id == current_user.id).all()
+    conversation_ids = [row.conversation_id for row in participant_rows]
+    if not conversation_ids:
+        return {'threads': []}
+
+    latest_message_sq = db.session.query(
+        Message.conversation_id.label('conversation_id'),
+        func.max(Message.id).label('last_message_id')).filter(
+            Message.conversation_id.in_(conversation_ids)).group_by(
+                Message.conversation_id).subquery()
+
+    unread_rows = db.session.query(
+        Message.conversation_id,
+        func.count(Message.id).label('unread_count')).filter(
+            Message.recipient_id == current_user.id,
+            Message.read_at.is_(None),
+            Message.conversation_id.in_(conversation_ids)).group_by(
+                Message.conversation_id).all()
+    unread_by_conversation = {
+        row.conversation_id: int(row.unread_count)
+        for row in unread_rows
+    }
+
+    rows = db.session.query(Conversation.id, Message).outerjoin(
+        latest_message_sq, latest_message_sq.c.conversation_id == Conversation.id).outerjoin(
+            Message, Message.id == latest_message_sq.c.last_message_id).filter(
+                Conversation.id.in_(conversation_ids)).all()
+
+    threads = []
+    for conversation_id, latest_message in rows:
+        partner = get_private_conversation_partner(conversation_id, current_user.id)
+        preview = ''
+        updated_at = datetime.utcnow().isoformat()
+        if latest_message:
+            updated_at = latest_message.created_at.isoformat()
+            if latest_message.message_type == 'private_sticker':
+                preview = '📎 Sticker'
+            else:
+                preview = latest_message.body or ''
+
+        threads.append({
+            'conversation_id': conversation_id,
+            'username': partner.username if partner else '',
+            'display_name': partner.display_name if partner else '',
+            'preview': preview,
+            'updated_at': updated_at,
+            'unread_count': unread_by_conversation.get(conversation_id, 0)
+        })
+
+    threads.sort(key=lambda thread: thread.get('updated_at', ''), reverse=True)
+    return {'threads': threads}
+
+
+
 @app.route('/api/private-chats/<int:conversation_id>/messages', methods=['GET'])
 @login_required
 def private_chat_messages(conversation_id: int):

@@ -10,6 +10,7 @@ let replyContext = null;
 let roomPolicies = {};
 let canSendInCurrentRoom = true;
 const privateConversationTargets = {};
+const dmThreadsByConversationId = new Map();
 
 const ROOM_MESSAGES_STORAGE_KEY = `partychat:roomMessages:${username}`;
 
@@ -61,11 +62,26 @@ function normalizeIncomingPrivateMessage(data) {
 }
 
 socket.on("private_message", (data) => {
-        const conversationKey = `private:${data.conversation_id}`;
-        privateConversationTargets[data.conversation_id] = {
+        const conversationId = String(data.conversation_id);
+        const conversationKey = `private:${conversationId}`;
+        privateConversationTargets[conversationId] = {
                 username: data.from,
                 display_name: data.from,
         };
+        const previousUnreadCount =
+                dmThreadsByConversationId.get(conversationId)?.unread_count || 0;
+        upsertDmThread({
+                conversation_id: conversationId,
+                username: data.from,
+                display_name: data.from,
+                preview: data.msg || "",
+                updated_at: data.timestamp || new Date().toISOString(),
+                unread_count:
+                        currentPrivateConversation &&
+                        String(currentPrivateConversation.id) === conversationId
+                                ? 0
+                                : previousUnreadCount + 1,
+        });
 
         addMessage(
                 {
@@ -78,11 +94,26 @@ socket.on("private_message", (data) => {
 });
 
 socket.on("private_sticker", (data) => {
-        const conversationKey = `private:${data.conversation_id}`;
-        privateConversationTargets[data.conversation_id] = {
+        const conversationId = String(data.conversation_id);
+        const conversationKey = `private:${conversationId}`;
+        privateConversationTargets[conversationId] = {
                 username: data.from,
                 display_name: data.from,
         };
+        const previousUnreadCount =
+                dmThreadsByConversationId.get(conversationId)?.unread_count || 0;
+        upsertDmThread({
+                conversation_id: conversationId,
+                username: data.from,
+                display_name: data.from,
+                preview: "📎 Sticker",
+                updated_at: data.timestamp || new Date().toISOString(),
+                unread_count:
+                        currentPrivateConversation &&
+                        String(currentPrivateConversation.id) === conversationId
+                                ? 0
+                                : previousUnreadCount + 1,
+        });
         addStickerMessage(data.from, data.file, "private", true, conversationKey);
 });
 
@@ -90,11 +121,26 @@ socket.on("private_sticker", (data) => {
 socket.on("private_message_batch", (data) => {
         const messages = Array.isArray(data?.messages) ? data.messages : [];
         messages.forEach((msg) => {
-                const conversationKey = `private:${msg.conversation_id}`;
-                privateConversationTargets[msg.conversation_id] = {
+                const conversationId = String(msg.conversation_id);
+                const conversationKey = `private:${conversationId}`;
+                privateConversationTargets[conversationId] = {
                         username: msg.from,
                         display_name: msg.from,
                 };
+                const previousUnreadCount =
+                        dmThreadsByConversationId.get(conversationId)?.unread_count || 0;
+                upsertDmThread({
+                        conversation_id: conversationId,
+                        username: msg.from,
+                        display_name: msg.from,
+                        preview: msg.message_type === "private_sticker" ? "📎 Sticker" : msg.msg,
+                        updated_at: msg.timestamp || new Date().toISOString(),
+                        unread_count:
+                                currentPrivateConversation &&
+                                String(currentPrivateConversation.id) === conversationId
+                                        ? 0
+                                        : previousUnreadCount + 1,
+                });
 
                 if (msg.message_type === "private_sticker") {
                         addStickerMessage(msg.from, msg.file, "private", true, conversationKey);
@@ -217,6 +263,117 @@ function hydrateRoomMessages() {
                 }
         } catch (_error) {
                 roomMessages = {};
+        }
+}
+
+
+function normalizeDmThread(thread) {
+        if (!thread || thread.conversation_id == null) {
+                return null;
+        }
+
+        const conversationId = String(thread.conversation_id);
+        const usernameValue = thread.username || thread.partner_username || "";
+        const displayName =
+                thread.display_name ||
+                thread.partner_display_name ||
+                usernameValue ||
+                "Unknown";
+        return {
+                conversation_id: conversationId,
+                username: usernameValue,
+                display_name: displayName,
+                preview: truncateText(thread.preview || ""),
+                updated_at: thread.updated_at || new Date().toISOString(),
+                unread_count: Number(thread.unread_count || 0),
+        };
+}
+
+function upsertDmThread(thread) {
+        const normalized = normalizeDmThread(thread);
+        if (!normalized) {
+                return;
+        }
+
+        const existing = dmThreadsByConversationId.get(normalized.conversation_id) || {};
+        const merged = { ...existing, ...normalized };
+        dmThreadsByConversationId.set(normalized.conversation_id, merged);
+
+        if (merged.username || merged.display_name) {
+                privateConversationTargets[normalized.conversation_id] = {
+                        username: merged.username,
+                        display_name: merged.display_name,
+                };
+        }
+
+        renderDmChatList();
+}
+
+function renderDmChatList() {
+        const container = document.getElementById("dm-chat-items");
+        if (!container) {
+                return;
+        }
+
+        const threads = Array.from(dmThreadsByConversationId.values()).sort((a, b) =>
+                (b.updated_at || "").localeCompare(a.updated_at || ""),
+        );
+
+        container.innerHTML = "";
+        threads.forEach((thread) => {
+                const item = document.createElement("button");
+                item.type = "button";
+                item.className = "dm-chat-item";
+                if (currentPrivateConversation && String(currentPrivateConversation.id) === String(thread.conversation_id)) {
+                        item.classList.add("active-dm-chat");
+                }
+                if (Number(thread.unread_count || 0) > 0) {
+                        item.classList.add("unread-dm");
+                }
+
+                const name = document.createElement("span");
+                name.className = "dm-chat-item-name";
+                name.textContent = thread.display_name || thread.username || "Unknown";
+
+                const preview = document.createElement("span");
+                preview.className = "dm-chat-item-preview";
+                preview.textContent = thread.preview || "Open chat";
+
+                item.appendChild(name);
+                item.appendChild(preview);
+
+                if (Number(thread.unread_count || 0) > 0) {
+                        const badge = document.createElement("span");
+                        badge.className = "dm-chat-item-badge";
+                        badge.textContent = String(thread.unread_count);
+                        item.appendChild(badge);
+                }
+
+                item.onclick = () =>
+                        openPrivateConversation(thread.conversation_id, {
+                                username: thread.username,
+                                display_name: thread.display_name,
+                        });
+                container.appendChild(item);
+        });
+}
+
+async function hydrateDmThreadList() {
+        if (!isAuthenticated) {
+                return;
+        }
+
+        try {
+                const response = await fetch("/api/private-chats");
+                const payload = await response.json();
+                if (!response.ok) {
+                        return;
+                }
+
+                const threads = Array.isArray(payload.threads) ? payload.threads : [];
+                threads.forEach((thread) => upsertDmThread(thread));
+        } catch (_error) {
+                // best effort only
         }
 }
 
@@ -449,6 +606,14 @@ function sendMessage() {
                         threadType: "private",
                         replyTo: replyContext,
                 });
+                upsertDmThread({
+                        conversation_id: currentPrivateConversation.id,
+                        username: currentPrivateConversation.username,
+                        display_name: currentPrivateConversation.display_name,
+                        preview: message,
+                        updated_at: new Date().toISOString(),
+                        unread_count: 0,
+                });
 
                 socket.emit("message", {
                         msg: message,
@@ -521,6 +686,16 @@ function sendSticker(file) {
 
         if (privateTarget) {
                 addStickerMessage(username, file, "own");
+                if (currentPrivateConversation) {
+                        upsertDmThread({
+                                conversation_id: currentPrivateConversation.id,
+                                username: currentPrivateConversation.username,
+                                display_name: currentPrivateConversation.display_name,
+                                preview: "📎 Sticker",
+                                updated_at: new Date().toISOString(),
+                                unread_count: 0,
+                        });
+                }
                 socket.emit("message", {
                         type: "private_sticker",
                         target: privateTarget,
@@ -655,6 +830,19 @@ async function loadPrivateConversationHistory(conversationId) {
 
         const key = `private:${conversationId}`;
         privateConversationTargets[conversationId] = payload.partner || {};
+        const latestMessage = payload.messages[payload.messages.length - 1] || null;
+        upsertDmThread({
+                conversation_id: conversationId,
+                username: payload.partner?.username || "",
+                display_name: payload.partner?.display_name || payload.partner?.username || "",
+                preview: latestMessage
+                        ? latestMessage.message_type === "private_sticker"
+                                ? "📎 Sticker"
+                                : latestMessage.body || ""
+                        : "",
+                updated_at: latestMessage?.created_at || new Date().toISOString(),
+                unread_count: 0,
+        });
         roomMessages[key] = payload.messages.map((msg) => {
                 if (msg.message_type === "private_sticker") {
                         return {
@@ -690,6 +878,10 @@ async function markConversationRead(conversationId) {
                         method: "POST",
                 });
                 socket.emit("mark_private_read", { conversation_id: conversationId });
+                upsertDmThread({
+                        conversation_id: conversationId,
+                        unread_count: 0,
+                });
         } catch (_error) {
                 // best effort only
         }
@@ -704,6 +896,12 @@ async function openPrivateConversation(conversationId, target) {
         setChatScope();
         updateComposerAccess();
         highlightActiveRoom(null);
+        upsertDmThread({
+                conversation_id: conversationId,
+                username: target.username,
+                display_name: target.display_name || target.username,
+                unread_count: 0,
+        });
         clearReply();
 
         try {
@@ -769,6 +967,14 @@ ${options}`,
                         return;
                 }
 
+                upsertDmThread({
+                        conversation_id: startPayload.conversation_id,
+                        username: startPayload.target.username,
+                        display_name: startPayload.target.display_name || startPayload.target.username,
+                        preview: "",
+                        updated_at: new Date().toISOString(),
+                        unread_count: 0,
+                });
                 await openPrivateConversation(startPayload.conversation_id, startPayload.target);
         } catch (_error) {
                 showRoomFeedback("Unable to start private chat.", true);
@@ -863,6 +1069,7 @@ function joinRoom(room) {
         socket.emit("join", { room });
 
         highlightActiveRoom(room);
+        renderDmChatList();
         clearReply();
         renderConversationMessages(getConversationStorageKey());
 }
@@ -921,6 +1128,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 roomCodeInput.addEventListener("keypress", handleRoomCodeEnter);
         }
 
+        hydrateDmThreadList();
+
         const params = new URLSearchParams(window.location.search);
         const joinedRoom = params.get("joined");
         const createdRoom = params.get("created");
@@ -942,4 +1151,5 @@ function highlightActiveRoom(room) {
                         item.classList.add("active-room");
                 }
         });
+        renderDmChatList();
 }
