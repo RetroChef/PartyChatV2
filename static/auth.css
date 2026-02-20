@@ -188,3 +188,25 @@ button:hover {
 
 .alert.success { background: #064e3b; }
 .alert.danger { background: #7f1d1d; }
+
+textarea {
+    width: 100%;
+    max-width: 100%;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+    border-radius: 8px;
+    border: 1px solid #1f2937;
+    background: #020617;
+    color: white;
+    font-size: 0.95em;
+    resize: vertical;
+}
+
+.profile-photo-large {
+    width: 104px;
+    height: 104px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid #60a5fa;
+    margin-bottom: 12px;
+}

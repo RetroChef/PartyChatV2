@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ profile_user.display_name or profile_user.username }} - Profile</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='auth.css') }}">
+</head>
+<body>
+    <div class="auth-container">
+        <div class="auth-card">
+            <h2>{{ profile_user.display_name or profile_user.username }}</h2>
+            <img class="profile-photo-large" src="{{ profile_avatar }}" alt="{{ profile_user.username }} profile photo">
+            <p><strong>Username:</strong> {{ profile_user.username }}</p>
+            <p><strong>Bio:</strong> {{ profile_user.bio or 'No bio yet.' }}</p>
+            <p class="switch"><a href="{{ url_for('index') }}">Back to chat</a></p>
+        </div>
+    </div>
+</body>
+</html>
