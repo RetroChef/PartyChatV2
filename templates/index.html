@@ -5,14 +5,14 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Advanced Real-Time Chat</title>
 		<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 		<link
 			rel="stylesheet"
 			href="{{ url_for('static', filename='styles.css') }}"
 		/>
 	</head>
 	<body>
-		<h2>Welcome, <span id="username" data-authenticated="{{ "true" if current_user.is_authenticated else "false" }}">{{ username }}</span>!</h2>
-		<div class="top-bar">
+		<div class="app-topbar">
 			<div class="auth-actions">
 				<a href="{{ url_for('profile', username=profile_username) if current_user.is_authenticated else '#' }}" class="profile-avatar-link" {% if not current_user.is_authenticated %}title="Guest profile"{% endif %}>
 					<img class="profile-avatar" src="{{ profile_avatar }}" alt="Profile photo" />
@@ -25,9 +25,10 @@
 				{% endif %}
 			</div>
 		</div>
-		<div class="container">
-			<div class="sidebar">
-				<div class="room-list">
+
+		<div class="app-shell">
+			<aside class="left-sidebar">
+				<div class="sidebar-section room-list">
 					<h3>Rooms</h3>
 					<div id="room-items">
 						{% for room in rooms %}
@@ -79,17 +80,32 @@
 					</div>
 				</div>
 
-				<div class="dm-list">
+				<div class="sidebar-section dm-list">
 					<h3>Direct Messages</h3>
 					<div id="dm-chat-items"></div>
 				</div>
 
-				<div class="user-list">
-					<h3>Online Users</h3>
-					<div id="active-users"></div>
+				<div class="sidebar-profile">
+					<a href="{{ url_for('profile', username=profile_username) if current_user.is_authenticated else '#' }}" class="sidebar-profile-link" {% if not current_user.is_authenticated %}title="Guest profile"{% endif %}>
+						<img class="profile-avatar" src="{{ profile_avatar }}" alt="Profile photo" />
+						<div class="sidebar-profile-info">
+							<span id="username" data-authenticated="{{ "true" if current_user.is_authenticated else "false" }}">{{ username }}</span>
+							<span class="sidebar-profile-status">Online</span>
+						</div>
+					</a>
 				</div>
-			</div>
-			<div class="main-chat">
+			</aside>
+
+			<main class="main-chat">
+				<div class="chat-header">
+					<div id="chat-room-title" class="chat-room-title"># General</div>
+					<img
+						id="online-users-toggle"
+						src="{{ url_for('static', filename='icons/online_users.png') }}"
+						alt="Toggle online users"
+						title="Toggle online users"
+					/>
+				</div>
 				<div id="chat"></div>
 				<div id="sticker-bar" class="sticker-bar collapsed">
 					{% for sticker in stickers %}
@@ -141,7 +157,14 @@
 					/>
 					<button id="send-button" onclick="sendMessage()">Send</button>
 				</div>
-			</div>
+			</main>
+
+			<aside id="online-users-panel" class="right-sidebar">
+				<div class="sidebar-section user-list">
+					<h3 id="online-users-title">ONLINE — 0</h3>
+					<div id="active-users"></div>
+				</div>
+			</aside>
 		</div>
 		<script src="{{ url_for('static', filename='chat.js') }}"></script>
 	</body>

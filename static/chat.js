@@ -194,12 +194,19 @@ socket.on("room_expired", (data) => {
 });
 
 socket.on("active_users", (data) => {
+        const users = Array.isArray(data.users) ? data.users : [];
         const userList = document.getElementById("active-users");
-        userList.innerHTML = data.users
+        const title = document.getElementById("online-users-title");
+        if (title) {
+                title.textContent = `ONLINE — ${users.length}`;
+        }
+
+        userList.innerHTML = users
                 .map(
                         (user) => `
             <div class="user-item" onclick="insertPrivateMessage('${user}')">
-                ${user} ${user === username ? "(you)" : ""}
+                <img class="user-item-avatar" src="${DEFAULT_AVATAR_PATH}" alt="${user} avatar" />
+                <span>${user} ${user === username ? "(you)" : ""}</span>
             </div>
         `,
                 )
@@ -430,6 +437,35 @@ function resolveAvatarUrl(avatarUrl) {
         return DEFAULT_AVATAR_PATH;
 }
 
+function formatTimestamp(timestampValue) {
+        const date = timestampValue ? new Date(timestampValue) : new Date();
+        return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function updateChatHeaderTitle() {
+        const title = document.getElementById("chat-room-title");
+        if (!title) {
+                return;
+        }
+
+        if (currentPrivateConversation) {
+                title.textContent = `@ ${getPrivateConversationLabel()}`;
+                return;
+        }
+
+        title.textContent = `# ${currentRoom}`;
+}
+
+function shouldGroupWithPrevious(chat, sender) {
+        const lastRow = chat.lastElementChild;
+        if (!lastRow || !lastRow.classList || !lastRow.classList.contains("message-row")) {
+                return false;
+        }
+
+        const previousSender = lastRow.dataset.sender || "";
+        return previousSender === sender;
+}
+
 function buildMessageRow(messageData, messageNode) {
         if (messageData.type === "system") {
                 return null;
@@ -483,10 +519,25 @@ function addMessage(messageData, shouldStore = true, conversationKey = getConver
                 }
         }
 
+        const headerDiv = document.createElement("div");
+        headerDiv.className = "message-header";
+
+        const senderDiv = document.createElement("span");
+        senderDiv.className = "message-sender";
+        senderDiv.textContent = messageData.sender;
+
+        const timestampDiv = document.createElement("span");
+        timestampDiv.className = "message-timestamp";
+        timestampDiv.textContent = formatTimestamp(messageData.timestamp || Date.now());
+
+        headerDiv.appendChild(senderDiv);
+        headerDiv.appendChild(timestampDiv);
+        messageDiv.appendChild(headerDiv);
+
         const textDiv = document.createElement("div");
         textDiv.className = "message-text";
         const prefix = messageData.threadType === "private" ? "[Private] " : "";
-        textDiv.textContent = `${prefix}${messageData.sender}: ${messageData.message}`;
+        textDiv.textContent = `${prefix}${messageData.message}`;
         messageDiv.appendChild(textDiv);
 
         if (messageData.type === "own" || messageData.type === "other" || messageData.type === "private") {
@@ -498,6 +549,12 @@ function addMessage(messageData, shouldStore = true, conversationKey = getConver
         }
 
         const row = buildMessageRow(messageData, messageDiv);
+        if (row) {
+                row.dataset.sender = messageData.sender || "";
+                if (shouldGroupWithPrevious(chat, messageData.sender || "")) {
+                        row.classList.add("grouped");
+                }
+        }
         chat.appendChild(row || messageDiv);
         messageElementsById.set(msgId, messageDiv);
         chat.scrollTop = chat.scrollHeight;
@@ -541,6 +598,12 @@ function addStickerMessage(sender, file, type = "other", shouldStore = true, con
         messageDiv.appendChild(senderDiv);
         messageDiv.appendChild(image);
         const row = buildMessageRow({ sender, type, avatarUrl }, messageDiv);
+        if (row) {
+                row.dataset.sender = sender || "";
+                if (shouldGroupWithPrevious(chat, sender || "")) {
+                        row.classList.add("grouped");
+                }
+        }
         chat.appendChild(row || messageDiv);
         chat.scrollTop = chat.scrollHeight;
 }
@@ -959,6 +1022,7 @@ async function openPrivateConversation(conversationId, target) {
         try {
                 await loadPrivateConversationHistory(conversationId);
                 renderConversationMessages(getConversationStorageKey());
+                updateChatHeaderTitle();
                 await markConversationRead(conversationId);
                 showRoomFeedback(`Private chat with ${getPrivateConversationLabel()}`);
         } catch (error) {
@@ -1125,6 +1189,7 @@ function joinRoom(room) {
         renderDmChatList();
         clearReply();
         renderConversationMessages(getConversationStorageKey());
+        updateChatHeaderTitle();
 }
 
 function updateComposerAccess() {
@@ -1182,6 +1247,16 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         hydrateDmThreadList();
+
+        const toggleButton = document.getElementById("online-users-toggle");
+        const onlineUsersPanel = document.getElementById("online-users-panel");
+        if (toggleButton && onlineUsersPanel) {
+                toggleButton.addEventListener("click", () => {
+                        onlineUsersPanel.classList.toggle("hidden");
+                });
+        }
+
+        updateChatHeaderTitle();
 
         const params = new URLSearchParams(window.location.search);
         const joinedRoom = params.get("joined");
