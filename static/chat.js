@@ -13,10 +13,6 @@ const privateConversationTargets = {};
 const dmThreadsByConversationId = new Map();
 
 const ROOM_MESSAGES_STORAGE_KEY = `partychat:roomMessages:${username}`;
-const DEFAULT_AVATAR_PATH = "/static/icons/Guest.jpeg";
-const currentUserAvatarSrc =
-        document.querySelector(".profile-avatar")?.getAttribute("src") ||
-        DEFAULT_AVATAR_PATH;
 
 hydrateRoomMessages();
 
@@ -36,7 +32,6 @@ socket.on("message", (data) => {
                         data.username === username ? "own" : "other",
                         true,
                         `room:${data.room || currentRoom}`,
-                        data.avatar_url || null,
                 );
                 return;
         }
@@ -48,7 +43,6 @@ socket.on("message", (data) => {
                 type: data.username === username ? "own" : "other",
                 threadType: "room",
                 replyTo: data.reply_to || null,
-                avatarUrl: data.avatar_url || null,
         });
 });
 
@@ -62,7 +56,6 @@ function normalizeIncomingPrivateMessage(data) {
                 type: sender === username ? "own" : "private",
                 threadType: "private",
                 status: data.status || "sent",
-                avatarUrl: data.avatar_url || null,
                 delivered_at: data.delivered_at || null,
                 read_at: data.read_at || null,
         };
@@ -121,7 +114,7 @@ socket.on("private_sticker", (data) => {
                                 ? 0
                                 : previousUnreadCount + 1,
         });
-        addStickerMessage(data.from, data.file, "private", true, conversationKey, data.avatar_url || null);
+        addStickerMessage(data.from, data.file, "private", true, conversationKey);
 });
 
 
@@ -150,7 +143,7 @@ socket.on("private_message_batch", (data) => {
                 });
 
                 if (msg.message_type === "private_sticker") {
-                        addStickerMessage(msg.from, msg.file, "private", true, conversationKey, msg.avatar_url || null);
+                        addStickerMessage(msg.from, msg.file, "private", true, conversationKey);
                         return;
                 }
 
@@ -423,39 +416,6 @@ function buildReplyBlock(replyTo) {
         return replyDiv;
 }
 
-function resolveAvatarUrl(avatarUrl) {
-        if (typeof avatarUrl === "string" && avatarUrl.trim()) {
-                return avatarUrl;
-        }
-        return DEFAULT_AVATAR_PATH;
-}
-
-function buildMessageRow(messageData, messageNode) {
-        if (messageData.type === "system") {
-                return null;
-        }
-
-        const row = document.createElement("div");
-        row.className = "message-row";
-        if (messageData.type === "own") {
-                row.classList.add("own");
-        }
-
-        const avatarLink = document.createElement("a");
-        avatarLink.className = "message-avatar-link";
-        avatarLink.href = `/profile/${encodeURIComponent(messageData.sender || "")}`;
-
-        const avatarImage = document.createElement("img");
-        avatarImage.className = "message-avatar";
-        avatarImage.src = resolveAvatarUrl(messageData.avatarUrl);
-        avatarImage.alt = `${messageData.sender || "User"} profile picture`;
-
-        avatarLink.appendChild(avatarImage);
-        row.appendChild(avatarLink);
-        row.appendChild(messageNode);
-        return row;
-}
-
 function addMessage(messageData, shouldStore = true, conversationKey = getConversationStorageKey()) {
         if (shouldStore) {
                 storeRoomMessage(messageData, conversationKey);
@@ -497,13 +457,12 @@ function addMessage(messageData, shouldStore = true, conversationKey = getConver
                 });
         }
 
-        const row = buildMessageRow(messageData, messageDiv);
-        chat.appendChild(row || messageDiv);
+        chat.appendChild(messageDiv);
         messageElementsById.set(msgId, messageDiv);
         chat.scrollTop = chat.scrollHeight;
 }
 
-function addStickerMessage(sender, file, type = "other", shouldStore = true, conversationKey = getConversationStorageKey(), avatarUrl = null) {
+function addStickerMessage(sender, file, type = "other", shouldStore = true, conversationKey = getConversationStorageKey()) {
         if (shouldStore) {
                 const isPrivateThread =
                         conversationKey.startsWith("private:") || type === "private";
@@ -513,7 +472,6 @@ function addStickerMessage(sender, file, type = "other", shouldStore = true, con
                                 message: file,
                                 type: `sticker:${type}`,
                                 threadType: isPrivateThread ? "private" : "room",
-                                avatarUrl,
                         },
                         conversationKey,
                 );
@@ -540,8 +498,7 @@ function addStickerMessage(sender, file, type = "other", shouldStore = true, con
 
         messageDiv.appendChild(senderDiv);
         messageDiv.appendChild(image);
-        const row = buildMessageRow({ sender, type, avatarUrl }, messageDiv);
-        chat.appendChild(row || messageDiv);
+        chat.appendChild(messageDiv);
         chat.scrollTop = chat.scrollHeight;
 }
 
@@ -655,7 +612,6 @@ function sendMessage() {
                         type: "own",
                         threadType: "private",
                         replyTo: replyContext,
-                        avatarUrl: currentUserAvatarSrc,
                 });
                 upsertDmThread({
                         conversation_id: currentPrivateConversation.id,
@@ -685,7 +641,6 @@ function sendMessage() {
                                         type: "own",
                                         threadType: "private",
                                         replyTo: replyContext,
-                                        avatarUrl: currentUserAvatarSrc,
                                 },
                                 true,
                                 conversationKey,
@@ -737,7 +692,7 @@ function sendSticker(file) {
         }
 
         if (privateTarget) {
-                addStickerMessage(username, file, "own", true, getConversationStorageKey(), currentUserAvatarSrc);
+                addStickerMessage(username, file, "own");
                 if (currentPrivateConversation) {
                         upsertDmThread({
                                 conversation_id: currentPrivateConversation.id,
@@ -1101,7 +1056,6 @@ function renderConversationMessages(conversationKey) {
                                 msg.type.replace("sticker:", ""),
                                 false,
                                 conversationKey,
-                                msg.avatarUrl || null,
                         );
                 } else {
                         addMessage(msg, false, conversationKey);
