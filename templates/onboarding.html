@@ -20,9 +20,10 @@
               {% endif %}
             {% endwith %}
 
-            <form method="POST">
+            <form method="POST" enctype="multipart/form-data">
                 <input type="text" name="display_name" placeholder="Display name" value="{{ current_user.display_name or '' }}" required maxlength="80">
-                <input type="url" name="avatar_url" placeholder="Avatar URL (optional)" value="{{ current_user.avatar_url or '' }}" maxlength="255">
+                <img class="profile-photo-large" src="{{ profile_avatar }}" alt="Current profile photo">
+                <input type="file" name="profile_image" accept=".jpg,.jpeg,.png,.gif,.webp">
                 <textarea name="bio" placeholder="Short bio (optional)" maxlength="500" rows="4">{{ current_user.bio or '' }}</textarea>
                 <button type="submit">Save profile</button>
             </form>

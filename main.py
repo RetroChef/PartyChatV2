@@ -11,6 +11,7 @@ from flask import Flask, render_template, request, session, redirect, url_for, f
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_login import LoginManager, login_user, current_user, logout_user, login_required
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.utils import secure_filename
 from sqlalchemy import inspect, text, func, distinct, or_
 from models import db, User, Conversation, ConversationParticipant, Message
 
@@ -32,7 +33,9 @@ app.config.update(SECRET_KEY=os.environ.get('SECRET_KEY', 'dev-key'),
                   CHAT_ROOMS=[
                       'General', 'Study Corner', 'Games and Entertainment',
                       'Technology Nook'
-                  ])
+                  ],
+                  PROFILE_UPLOAD_FOLDER='uploads/profile_pictures',
+                  PROFILE_UPLOAD_EXTENSIONS={'.jpg', '.jpeg', '.png', '.gif', '.webp'})
 # Available chat rooms - stored as constant for now, could be moved to database
 
 # Handle reverse proxy headers
@@ -70,6 +73,9 @@ def ensure_user_profile_columns() -> None:
 with app.app_context():
     db.create_all()
     ensure_user_profile_columns()
+
+os.makedirs(os.path.join(app.static_folder, app.config['PROFILE_UPLOAD_FOLDER']),
+            exist_ok=True)
     
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -109,6 +115,34 @@ INACTIVITY_OPTIONS = {
 }
 
 ALLOWED_STICKER_EXTENSIONS = {'.gif', '.png', '.jpg', '.jpeg', '.webp'}
+DEFAULT_AVATAR = 'icons/Guest.jpeg'
+
+
+def get_default_avatar_path() -> str:
+    return url_for('static', filename=DEFAULT_AVATAR)
+
+
+def get_user_avatar_path(user: User | None) -> str:
+    if user and user.avatar_url:
+        return url_for('static', filename=user.avatar_url)
+    return get_default_avatar_path()
+
+
+def save_profile_image(uploaded_file) -> str | None:
+    if not uploaded_file or not uploaded_file.filename:
+        return None
+
+    _, ext = os.path.splitext(uploaded_file.filename)
+    ext = ext.lower()
+    if ext not in app.config['PROFILE_UPLOAD_EXTENSIONS']:
+        return None
+
+    safe_name = secure_filename(uploaded_file.filename)
+    unique_name = f'{uuid.uuid4().hex}_{safe_name}'
+    relative_path = os.path.join(app.config['PROFILE_UPLOAD_FOLDER'], unique_name)
+    absolute_path = os.path.join(app.static_folder, relative_path)
+    uploaded_file.save(absolute_path)
+    return relative_path.replace('\\', '/')
 
 
 def get_available_stickers() -> List[str]:
@@ -545,7 +579,11 @@ def index():
                            username=username,
                            rooms=get_rooms_for_sidebar(),
                            owned_rooms=get_owned_rooms(username),
-                           stickers=get_available_stickers())
+                           stickers=get_available_stickers(),
+                           profile_avatar=get_user_avatar_path(current_user
+                                                               if current_user.is_authenticated
+                                                               else None),
+                           profile_username=current_user.username if current_user.is_authenticated else username)
 
 
 @app.route('/create-room')
@@ -660,7 +698,9 @@ def list_chat_users():
         'users': [{
             'id': user.id,
             'username': user.username,
-            'display_name': user.display_name
+            'display_name': user.display_name,
+            'avatar_url': get_user_avatar_path(user),
+            'bio': user.bio or ''
         } for user in users]
     }
 
@@ -692,7 +732,9 @@ def start_private_chat():
         'target': {
             'id': target_user.id,
             'username': target_user.username,
-            'display_name': target_user.display_name
+            'display_name': target_user.display_name,
+            'avatar_url': get_user_avatar_path(target_user),
+            'bio': target_user.bio or ''
         }
     }
 
@@ -915,7 +957,7 @@ def onboarding():
     if request.method == 'POST':
         display_name = request.form.get('display_name', '').strip()
         bio = request.form.get('bio', '').strip()
-        avatar_url = request.form.get('avatar_url', '').strip()
+        profile_image = request.files.get('profile_image')
 
         if not (2 <= len(display_name) <= 80):
             flash('Display name must be between 2 and 80 characters.', 'danger')
@@ -925,20 +967,39 @@ def onboarding():
             flash('Bio must be 500 characters or fewer.', 'danger')
             return redirect(url_for('onboarding'))
 
-        if avatar_url and not re.match(r'^https?://[^\s]+$', avatar_url):
-            flash('Avatar URL must be a valid http(s) URL.', 'danger')
-            return redirect(url_for('onboarding'))
+        if profile_image and profile_image.filename:
+            _, ext = os.path.splitext(profile_image.filename)
+            if ext.lower() not in app.config['PROFILE_UPLOAD_EXTENSIONS']:
+                flash('Profile image must be jpg, jpeg, png, gif, or webp.', 'danger')
+                return redirect(url_for('onboarding'))
+
+        saved_avatar_path = save_profile_image(profile_image) if profile_image else None
 
         current_user.display_name = display_name
         current_user.bio = bio
-        current_user.avatar_url = avatar_url
+        if saved_avatar_path:
+            current_user.avatar_url = saved_avatar_path
         current_user.is_profile_complete = True
         db.session.commit()
 
         flash('Profile completed successfully!', 'success')
         return redirect(url_for('index'))
 
-    return render_template('onboarding.html')
+    return render_template('onboarding.html',
+                           profile_avatar=get_user_avatar_path(current_user))
+
+
+@app.route('/profile/<string:username>')
+def profile(username: str):
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        flash('User profile not found.', 'danger')
+        return redirect(url_for('index'))
+
+    return render_template('profile.html',
+                           profile_user=user,
+                           profile_avatar=get_user_avatar_path(user),
+                           default_avatar=get_default_avatar_path())
 
 @app.route('/logout')
 def logout():
