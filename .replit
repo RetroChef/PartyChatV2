@@ -1,10 +1,10 @@
-modules = ["python-3.12", "web", "nodejs-20"]
+modules = ["nodejs-20", "web", "python-3.11"]
 [agent]
 expertMode = true
 
 [nix]
 channel = "stable-25_05"
-packages = ["libev"]
+packages = ["libev", "openssl", "postgresql"]
 
 [workflows]
 runButton = "Project"
@@ -22,13 +22,13 @@ args = "Start application"
 name = "Start application"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python main.py"
-waitForPort = 5000
-
 [workflows.workflow.metadata]
 outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "gunicorn --bind 0.0.0.0:5000 --reuse-port --reload --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker main:app"
+waitForPort = 5000
 
 [[ports]]
 localPort = 5000
@@ -36,4 +36,4 @@ externalPort = 80
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["python", "main.py"]
+run = ["gunicorn", "--bind", "0.0.0.0:5000", "--worker-class", "geventwebsocket.gunicorn.workers.GeventWebSocketWorker", "main:app"]
