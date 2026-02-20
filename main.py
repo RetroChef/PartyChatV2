@@ -418,7 +418,8 @@ def serialize_private_message(message: Message, sender: User,
         'delivered_at': message.delivered_at.isoformat()
         if message.delivered_at else None,
         'read_at': message.read_at.isoformat() if message.read_at else None,
-        'status': get_message_status(message)
+        'status': get_message_status(message),
+        'avatar_url': get_user_avatar_path(sender)
     }
 
 
@@ -1126,6 +1127,8 @@ def on_leave(data: dict):
 def handle_message(data: dict):
     try:
         username = session['username']
+        sender_user = get_user_by_username(username)
+        sender_avatar_url = get_user_avatar_path(sender_user)
         room = data.get('room', 'General')
         msg_type = data.get('type', 'message')
         message = data.get('msg', '').strip()
@@ -1163,7 +1166,8 @@ def handle_message(data: dict):
                 'username': username,
                 'room': room,
                 'file': file,
-                'timestamp': timestamp
+                'timestamp': timestamp,
+                'avatar_url': sender_avatar_url
             },
                  room=room)
             touch_room_activity(room)
@@ -1216,7 +1220,8 @@ def handle_message(data: dict):
                     'timestamp': message_row.created_at.isoformat(),
                     'delivered_at': delivered_at.isoformat(),
                     'read_at': None,
-                    'status': 'delivered'
+                    'status': 'delivered',
+                    'avatar_url': sender_avatar_url
                 },
                      room=recipient_sid)
                 logger.info(f"Private sticker sent: {username} -> {target_user}")
@@ -1280,7 +1285,8 @@ def handle_message(data: dict):
                     'delivered_at': delivered_at.isoformat(),
                     'read_at': None,
                     'status': 'delivered',
-                    'reply_to': reply_payload
+                    'reply_to': reply_payload,
+                    'avatar_url': sender_avatar_url
                 },
                      room=recipient_sid)
                 logger.info(f"Private message sent: {username} -> {target_user}")
@@ -1323,7 +1329,8 @@ def handle_message(data: dict):
                 'room': room,
                 'timestamp': timestamp,
                 'type': 'message',
-                'reply_to': reply_payload
+                'reply_to': reply_payload,
+                'avatar_url': sender_avatar_url
             },
                  room=room)
             touch_room_activity(room)
