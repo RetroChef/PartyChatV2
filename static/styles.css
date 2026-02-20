@@ -691,16 +691,3 @@ button:active {
     border-radius: 50%;
     padding: 0;
 }
-
-.profile-avatar-link {
-    display: inline-flex;
-    align-items: center;
-}
-
-.profile-avatar {
-    width: 42px;
-    height: 42px;
-    border-radius: 50%;
-    object-fit: cover;
-    border: 2px solid #dbeafe;
-}
