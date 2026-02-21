@@ -45,6 +45,14 @@ body {
     overflow: hidden;
 }
 
+.app-shell.online-users-hidden {
+    grid-template-columns: 260px minmax(0, 1fr) 0;
+}
+
+.app-shell.online-users-hidden .right-sidebar {
+    border-left: none;
+}
+
 .left-sidebar,
 .right-sidebar {
     min-height: 0;

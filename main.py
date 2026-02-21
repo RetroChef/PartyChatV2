@@ -331,6 +331,26 @@ def get_user_by_username(username: str) -> User | None:
     return User.query.filter_by(username=username).first()
 
 
+def build_active_users_payload() -> List[dict]:
+    payload: List[dict] = []
+    for user_data in active_users.values():
+        username = user_data.get('username', '')
+        if not username:
+            continue
+
+        avatar_url = user_data.get('avatar_url')
+        if not avatar_url:
+            user = get_user_by_username(username)
+            avatar_url = get_user_avatar_path(user)
+
+        payload.append({
+            'username': username,
+            'avatar_url': avatar_url
+        })
+
+    return payload
+
+
 def get_user_by_id(user_id: int | str | None) -> User | None:
     if user_id in (None, ''):
         return None
@@ -1026,6 +1046,7 @@ def connect():
 
         active_users[request.sid] = {
             'username': session['username'],
+            'avatar_url': get_user_avatar_path(current_user if current_user.is_authenticated else None),
             'connected_at': datetime.now().isoformat()
         }
 
@@ -1034,7 +1055,7 @@ def connect():
             emit_missed_private_messages(current_user)
 
         emit('active_users',
-             {'users': [user['username'] for user in active_users.values()]},
+             {'users': build_active_users_payload()},
              broadcast=True)
 
         logger.info(f"User connected: {session['username']}")
@@ -1058,7 +1079,7 @@ def disconnect():
                 user_presence.pop(user_id, None)
 
             emit('active_users', {
-                'users': [user['username'] for user in active_users.values()]
+                'users': build_active_users_payload()
             },
                  broadcast=True)
 
