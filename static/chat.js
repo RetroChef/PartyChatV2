@@ -195,22 +195,49 @@ socket.on("room_expired", (data) => {
 
 socket.on("active_users", (data) => {
         const users = Array.isArray(data.users) ? data.users : [];
+        const normalizedUsers = users
+                .map((entry) => {
+                        if (typeof entry === "string") {
+                                return {
+                                        username: entry,
+                                        avatar_url: DEFAULT_AVATAR_PATH,
+                                };
+                        }
+
+                        return {
+                                username: entry?.username || "",
+                                avatar_url: entry?.avatar_url || DEFAULT_AVATAR_PATH,
+                        };
+                })
+                .filter((userEntry) => Boolean(userEntry.username));
+
         const userList = document.getElementById("active-users");
         const title = document.getElementById("online-users-title");
         if (title) {
-                title.textContent = `ONLINE — ${users.length}`;
+                title.textContent = `ONLINE — ${normalizedUsers.length}`;
         }
 
-        userList.innerHTML = users
-                .map(
-                        (user) => `
-            <div class="user-item" onclick="insertPrivateMessage('${user}')">
-                <img class="user-item-avatar" src="${DEFAULT_AVATAR_PATH}" alt="${user} avatar" />
-                <span>${user} ${user === username ? "(you)" : ""}</span>
-            </div>
-        `,
-                )
-                .join("");
+        userList.innerHTML = "";
+        normalizedUsers.forEach((userEntry) => {
+                const userItem = document.createElement("div");
+                userItem.className = "user-item";
+                userItem.addEventListener("click", () =>
+                        insertPrivateMessage(userEntry.username),
+                );
+
+                const avatar = document.createElement("img");
+                avatar.className = "user-item-avatar";
+                avatar.src = userEntry.avatar_url;
+                avatar.alt = `${userEntry.username} avatar`;
+
+                const userLabel = document.createElement("span");
+                userLabel.textContent = `${userEntry.username} ${
+                        userEntry.username === username ? "(you)" : ""
+                }`;
+
+                userItem.append(avatar, userLabel);
+                userList.appendChild(userItem);
+        });
 });
 
 
@@ -1251,9 +1278,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const toggleButton = document.getElementById("online-users-toggle");
         const onlineUsersPanel = document.getElementById("online-users-panel");
-        if (toggleButton && onlineUsersPanel) {
+        const appShell = document.querySelector(".app-shell");
+        if (toggleButton && onlineUsersPanel && appShell) {
                 toggleButton.addEventListener("click", () => {
-                        onlineUsersPanel.classList.toggle("hidden");
+                        const isHidden = onlineUsersPanel.classList.toggle("hidden");
+                        appShell.classList.toggle("online-users-hidden", isHidden);
                 });
         }
 

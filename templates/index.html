@@ -14,9 +14,6 @@
 	<body>
 		<div class="app-topbar">
 			<div class="auth-actions">
-				<a href="{{ url_for('profile', username=profile_username) if current_user.is_authenticated else '#' }}" class="profile-avatar-link" {% if not current_user.is_authenticated %}title="Guest profile"{% endif %}>
-					<img class="profile-avatar" src="{{ profile_avatar }}" alt="Profile photo" />
-				</a>
 				{% if current_user.is_authenticated %}
 				<a href="{{ url_for('logout') }}" class="btn danger">Logout</a>
 				{% else %}
