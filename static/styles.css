@@ -325,6 +325,12 @@ body {
     background: transparent;
     padding: 0;
     border-radius: 0;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+.message.message-highlight {
+    background: rgba(59, 130, 246, 0.22);
+    border-radius: 8px;
+    box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.55);
 }
 
 .message-header {
