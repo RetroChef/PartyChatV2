@@ -292,14 +292,14 @@ function normalizeDmThread(thread) {
                 thread.display_name ||
                 thread.partner_display_name ||
                 usernameValue ||
-                "Direct chat";
+                "";
         const previewText = truncateText(thread.preview || "");
         return {
                 conversation_id: conversationId,
                 username: usernameValue,
                 display_name: displayName,
                 preview: previewText,
-                updated_at: thread.updated_at || new Date().toISOString(),
+                updated_at: thread.updated_at || "",
                 unread_count: Number(thread.unread_count || 0),
         };
 }
@@ -315,8 +315,9 @@ function upsertDmThread(thread) {
                 ...existing,
                 ...normalized,
                 username: normalized.username || existing.username || "",
-                display_name: normalized.display_name || existing.display_name || "Direct chat",
+                display_name: normalized.display_name || existing.display_name || "",
                 preview: normalized.preview || existing.preview || "",
+                updated_at: normalized.updated_at || existing.updated_at || "",
         };
         dmThreadsByConversationId.set(normalized.conversation_id, merged);
 
