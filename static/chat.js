@@ -29,13 +29,14 @@ socket.on("connect", () => {
 });
 
 socket.on("message", (data) => {
+        const conversationKey = `room:${data.room || currentRoom}`;
         if (data.type === "sticker") {
                 addStickerMessage(
                         data.username,
                         data.file,
                         data.username === username ? "own" : "other",
                         true,
-                        `room:${data.room || currentRoom}`,
+                        conversationKey,
                         data.avatar_url || null,
                 );
                 return;
@@ -49,7 +50,46 @@ socket.on("message", (data) => {
                 threadType: "room",
                 replyTo: data.reply_to || null,
                 avatarUrl: data.avatar_url || null,
+        }, true, conversationKey);
+});
+
+socket.on("room_history", (data) => {
+        const roomName = data?.room;
+        if (!roomName) {
+                return;
+        }
+
+        const history = Array.isArray(data.messages) ? data.messages : [];
+        const conversationKey = `room:${roomName}`;
+        roomMessages[conversationKey] = history.map((msg) => {
+                if (msg.type === "sticker") {
+                        return {
+                                id: msg.id,
+                                sender: msg.username,
+                                message: msg.file,
+                                type: `sticker:${msg.username === username ? "own" : "other"}`,
+                                threadType: "room",
+                                avatarUrl: msg.avatar_url || null,
+                                timestamp: msg.timestamp,
+                        };
+                }
+
+                return {
+                        id: msg.id,
+                        sender: msg.username,
+                        message: msg.msg || "",
+                        type: msg.username === username ? "own" : "other",
+                        threadType: "room",
+                        replyTo: msg.reply_to || null,
+                        avatarUrl: msg.avatar_url || null,
+                        timestamp: msg.timestamp,
+                };
         });
+        persistRoomMessages();
+
+        if (!currentPrivateConversation && currentRoom === roomName) {
+                renderConversationMessages(conversationKey);
+        }
 });
 
 
