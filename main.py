@@ -100,6 +100,7 @@ active_users: Dict[str, dict] = {}
 user_presence: Dict[int, str] = {}
 room_directory: Dict[str, dict] = {}
 room_code_index: Dict[str, str] = {}
+room_message_history: Dict[str, List[dict]] = {}
 MESSAGE_POLICIES = {'everyone', 'host_mods_only'}
 EXPIRATION_OPTIONS = {
     'never': None,
@@ -187,6 +188,7 @@ def add_room(room_name: str,
         room_meta.setdefault('expires_at', None)
         room_meta.setdefault('last_activity_at', room_meta.get('created_at'))
         room_meta.setdefault('archive_on_inactive', 'none')
+        room_message_history.setdefault(normalized_name, [])
         return room_meta['code']
 
     if message_policy not in MESSAGE_POLICIES:
@@ -212,6 +214,7 @@ def add_room(room_name: str,
         'moderators': []
     }
     room_code_index[code] = normalized_name
+    room_message_history.setdefault(normalized_name, [])
     return code
 
 def parse_iso_datetime(value: str | None) -> datetime | None:
@@ -253,6 +256,17 @@ def remove_room(room_name: str) -> None:
     room_code = room_meta.get('code')
     if room_code:
         room_code_index.pop(room_code, None)
+    room_message_history.pop(room_name, None)
+
+
+def append_room_history(room_name: str, payload: dict) -> None:
+    history = room_message_history.setdefault(room_name, [])
+    history.append(payload)
+
+
+def emit_room_history(room_name: str) -> None:
+    history = room_message_history.get(room_name, [])
+    emit('room_history', {'room': room_name, 'messages': history}, room=request.sid)
 
 
 def cleanup_expired_rooms() -> None:
@@ -1107,6 +1121,7 @@ def on_join(data: dict):
         join_room(room)
         active_users[request.sid]['room'] = room
         emit_room_state(room, username)
+        emit_room_history(room)
 
         emit('status', {
             'msg': f'{username} has joined the room.',
@@ -1181,7 +1196,7 @@ def handle_message(data: dict):
                 return
 
 
-            emit('message', {
+            message_payload = {
                 'id': str(uuid.uuid4()),
                 'type': 'sticker',
                 'username': username,
@@ -1189,8 +1204,9 @@ def handle_message(data: dict):
                 'file': file,
                 'timestamp': timestamp,
                 'avatar_url': sender_avatar_url
-            },
-                 room=room)
+            }
+            emit('message', message_payload, room=room)
+            append_room_history(room, message_payload)
             touch_room_activity(room)
 
             logger.info(f"Sticker sent in {room} by {username}")
@@ -1343,7 +1359,7 @@ def handle_message(data: dict):
                     'msg': reply_to.get('msg')
                 }
 
-            emit('message', {
+            message_payload = {
                 'id': str(uuid.uuid4()),
                 'msg': message,
                 'username': username,
@@ -1352,8 +1368,9 @@ def handle_message(data: dict):
                 'type': 'message',
                 'reply_to': reply_payload,
                 'avatar_url': sender_avatar_url
-            },
-                 room=room)
+            }
+            emit('message', message_payload, room=room)
+            append_room_history(room, message_payload)
             touch_room_activity(room)
 
             logger.info(f"Message sent in {room} by {username}")
