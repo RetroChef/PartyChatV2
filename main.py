@@ -822,6 +822,7 @@ def list_private_chats():
             'conversation_id': conversation_id,
             'username': partner.username if partner else '',
             'display_name': partner.display_name if partner else '',
+            'avatar_url': get_user_avatar_path(partner) if partner else get_default_avatar_path(),
             'preview': preview,
             'updated_at': updated_at,
             'unread_count': unread_by_conversation.get(conversation_id, 0)
@@ -907,7 +908,8 @@ def private_chat_messages(conversation_id: int):
         'partner': {
             'id': partner.id,
             'username': partner.username,
-            'display_name': partner.display_name
+            'display_name': partner.display_name,
+            'avatar_url': get_user_avatar_path(partner)
         } if partner else None
     }
 

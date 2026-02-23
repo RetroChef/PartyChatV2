@@ -167,8 +167,23 @@ body {
 .dm-chat-item {
     width: 100%;
     display: grid;
-    gap: 4px;
+    grid-template-columns: 32px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
     position: relative;
+}
+
+.dm-chat-item-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.dm-chat-item-content {
+    display: grid;
+    min-width: 0;
+    gap: 4px;
 }
 
 .dm-chat-item-preview {

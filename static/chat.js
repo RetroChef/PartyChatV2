@@ -122,6 +122,7 @@ socket.on("private_message", (data) => {
                 username: data.from,
                 display_name: data.from,
                 preview: data.msg || "",
+                avatar_url: data.avatar_url || DEFAULT_AVATAR_PATH,
                 updated_at: data.timestamp || new Date().toISOString(),
                 unread_count:
                         currentPrivateConversation &&
@@ -154,6 +155,7 @@ socket.on("private_sticker", (data) => {
                 username: data.from,
                 display_name: data.from,
                 preview: "📎 Sticker",
+                avatar_url: data.avatar_url || DEFAULT_AVATAR_PATH,
                 updated_at: data.timestamp || new Date().toISOString(),
                 unread_count:
                         currentPrivateConversation &&
@@ -181,6 +183,7 @@ socket.on("private_message_batch", (data) => {
                         username: msg.from,
                         display_name: msg.from,
                         preview: msg.message_type === "private_sticker" ? "📎 Sticker" : msg.msg,
+                        avatar_url: msg.avatar_url || DEFAULT_AVATAR_PATH,
                         updated_at: msg.timestamp || new Date().toISOString(),
                         unread_count:
                                 currentPrivateConversation &&
@@ -365,6 +368,7 @@ function normalizeDmThread(thread) {
                 conversation_id: conversationId,
                 username: usernameValue,
                 display_name: displayName,
+                avatar_url: thread.avatar_url || thread.partner_avatar_url || DEFAULT_AVATAR_PATH,
                 preview: previewText,
                 updated_at: thread.updated_at || "",
                 unread_count: Number(thread.unread_count || 0),
@@ -385,6 +389,7 @@ function upsertDmThread(thread) {
                 display_name: normalized.display_name || existing.display_name || "",
                 preview: normalized.preview || existing.preview || "",
                 updated_at: normalized.updated_at || existing.updated_at || "",
+                avatar_url: normalized.avatar_url || existing.avatar_url || DEFAULT_AVATAR_PATH,
         };
         dmThreadsByConversationId.set(normalized.conversation_id, merged);
 
@@ -424,12 +429,22 @@ function renderDmChatList() {
                 name.className = "dm-chat-item-name";
                 name.textContent = thread.display_name || thread.username || "Direct chat";
 
+                const avatar = document.createElement("img");
+                avatar.className = "dm-chat-item-avatar";
+                avatar.src = thread.avatar_url || DEFAULT_AVATAR_PATH;
+                avatar.alt = `${thread.display_name || thread.username || "User"} avatar`;
+
+                const textContent = document.createElement("div");
+                textContent.className = "dm-chat-item-content";
+
                 const preview = document.createElement("span");
                 preview.className = "dm-chat-item-preview";
                 preview.textContent = thread.preview || "No messages yet";
 
-                item.appendChild(name);
-                item.appendChild(preview);
+                textContent.appendChild(name);
+                textContent.appendChild(preview);
+                item.appendChild(avatar);
+                item.appendChild(textContent);
 
                 if (Number(thread.unread_count || 0) > 0) {
                         const badge = document.createElement("span");
@@ -442,6 +457,7 @@ function renderDmChatList() {
                         openPrivateConversation(thread.conversation_id, {
                                 username: thread.username,
                                 display_name: thread.display_name,
+                                avatar_url: thread.avatar_url,
                         });
                 container.appendChild(item);
         });
@@ -1018,6 +1034,7 @@ async function loadPrivateConversationHistory(conversationId) {
                 conversation_id: conversationId,
                 username: payload.partner?.username || "",
                 display_name: payload.partner?.display_name || payload.partner?.username || "",
+                avatar_url: payload.partner?.avatar_url || DEFAULT_AVATAR_PATH,
                 preview: latestMessage
                         ? latestMessage.message_type === "private_sticker"
                                 ? "📎 Sticker"
@@ -1083,6 +1100,7 @@ async function openPrivateConversation(conversationId, target) {
                 conversation_id: conversationId,
                 username: target.username,
                 display_name: target.display_name || target.username,
+                avatar_url: target.avatar_url || DEFAULT_AVATAR_PATH,
                 unread_count: 0,
         });
         clearReply();
@@ -1155,6 +1173,7 @@ ${options}`,
                         conversation_id: startPayload.conversation_id,
                         username: startPayload.target.username,
                         display_name: startPayload.target.display_name || startPayload.target.username,
+                        avatar_url: startPayload.target.avatar_url || DEFAULT_AVATAR_PATH,
                         preview: "",
                         updated_at: new Date().toISOString(),
                         unread_count: 0,
